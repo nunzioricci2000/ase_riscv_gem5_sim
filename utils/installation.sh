@@ -15,6 +15,7 @@ fi
 GEM5_REQUIRED_BRANCH="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["gem5"])' "${BRANCH_CONFIG}")"
 export GEM5_REQUIRED_BRANCH
 export WORK_DIR ROOT_DIR UTILS_DIR OS ARCH
+source "${UTILS_DIR}/install_build.sh"
 
 usage() {
     cat <<'EOF'
@@ -25,6 +26,15 @@ Commands:
   gem5        Install only the gem5 simulator
   ase-studio  Install ASE Studio and its native GTK launcher
   all-ase     Install toolchain, gem5, and ASE Studio
+
+Environment:
+  BUILD_JOBS=N                 Override CPU/memory-aware build parallelism
+  TOOLCHAIN_MODE=auto|source    Reuse a working toolchain (default: auto)
+  RISCV_TOOLCHAIN_PATH=DIR     Reuse this toolchain (RV32/RV64 C runtime required)
+  GEM5_PYTHON=COMMAND          Python for gem5 (default: python3.10)
+  GEM5_PYTHON_CONFIG=COMMAND   Matching python-config command
+  GEM5_LINKER=bfd|gold|lld|mold Optional linker; must already be installed
+  GEM5_BUILD_CACHE=DIR         Optional persistent SCons object cache
 EOF
 }
 
@@ -48,18 +58,19 @@ choose_command() {
 }
 
 detect_distribution() {
+    local ID="" ID_LIKE="" VERSION_ID=""
     if [[ "${OS}" != "Linux" ]]; then
         echo "Unsupported operating system: ${OS}" >&2
         exit 1
     fi
-    if command -v lsb_release >/dev/null 2>&1; then
-        DISTRO="$(lsb_release -is)"
-        VERSION="$(lsb_release -rs)"
-    elif [[ -r /etc/os-release ]]; then
+    if [[ -r /etc/os-release ]]; then
         # shellcheck disable=SC1091
         source /etc/os-release
         DISTRO="${ID:-}"
         VERSION="${VERSION_ID:-}"
+    elif command -v lsb_release >/dev/null 2>&1; then
+        DISTRO="$(lsb_release -is)"
+        VERSION="$(lsb_release -rs)"
     else
         echo "Could not determine the Linux distribution." >&2
         exit 1
@@ -68,7 +79,16 @@ detect_distribution() {
         ubuntu) DISTRO="Ubuntu" ;;
         fedora) DISTRO="Fedora" ;;
         arch|manjarolinux|manjaro) DISTRO="Arch" ;;
-        *) echo "Unsupported Linux distribution: ${DISTRO}" >&2; exit 1 ;;
+        *)
+            # Arch derivatives (such as Omarchy) declare their base in ID_LIKE.
+            # Match complete words, since ID_LIKE can contain several IDs.
+            if [[ " ${ID_LIKE,,} " =~ [[:space:]]arch[[:space:]] ]]; then
+                DISTRO="Arch"
+            else
+                echo "Unsupported Linux distribution: ${DISTRO}" >&2
+                exit 1
+            fi
+            ;;
     esac
     MAJOR="${VERSION%%.*}"
     MINOR="${VERSION#*.}"
@@ -76,15 +96,12 @@ detect_distribution() {
 }
 
 component_target_exists() {
-    local compiler
     case "$1" in
-        toolchain)
-            for compiler in "${ROOT_DIR}"/riscv-toolchain/bin/riscv*-gcc; do
-                [[ -x "${compiler}" ]] && return 0
-            done
-            return 1
+        toolchain) find_installed_toolchain ;;
+        gem5)
+            [[ -x "${ROOT_DIR}/gem5/build/RISCV/gem5.opt" ]] &&
+                "${ROOT_DIR}/gem5/build/RISCV/gem5.opt" --help >/dev/null 2>&1
             ;;
-        gem5) [[ -x "${ROOT_DIR}/gem5/build/RISCV/gem5.opt" ]] ;;
         *) return 1 ;;
     esac
 }
@@ -94,24 +111,35 @@ install_native_component() {
     local script_name="${component}"
     [[ "${component}" == "toolchain" ]] && script_name="riscv-toolchain"
     if component_target_exists "${component}"; then
+        record_install_event skipped "" "" "${component}"
         echo "${component} is already installed; skipping."
         return
+    fi
+    if [[ "${component}" == toolchain && "${TOOLCHAIN_MODE}" != source && -n "${RISCV_TOOLCHAIN_PATH:-}" &&
+          "${RISCV_TOOLCHAIN_PATH%/}" != "${ROOT_DIR}/riscv-toolchain" &&
+          "${RISCV_TOOLCHAIN_PATH%/}" != "${ROOT_DIR}/riscv-toolchain/bin" ]]; then
+        install_error "RISCV_TOOLCHAIN_PATH failed validation; provide an RV32/RV64 toolchain with its C runtime, or use TOOLCHAIN_MODE=source."
+        exit 1
     fi
     local base="${UTILS_DIR}/${OS}/${DISTRO}/${script_name}"
     if [[ ! -f "${base}_dep.sh" || ! -f "${base}_install.sh" ]]; then
         echo "No ${component} installer is available for ${DISTRO}." >&2
         exit 1
     fi
-    echo "Installing ${component} dependencies..."
-    sudo -E bash "${base}_dep.sh"
-    echo "Installing ${component}..."
-    bash "${base}_install.sh"
+    run_install_stage "Installing ${component} dependencies" sudo -E bash "${base}_dep.sh"
+    # Dependencies may refresh package indexes; later stages in this run reuse them.
+    export ASE_PACKAGE_INDEX_READY=1
+    run_install_stage "Installing ${component}" bash "${base}_install.sh"
+    component_target_exists "${component}" || {
+        install_error "${component} did not pass its post-install check."
+        exit 1
+    }
 }
 
 install_ase_studio_dependencies() {
     case "${DISTRO}" in
         Ubuntu)
-            sudo apt-get update
+            [[ "${ASE_PACKAGE_INDEX_READY:-0}" == 1 ]] || sudo apt-get update
             sudo apt-get install -y git python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1
             ;;
         Fedora)
@@ -120,13 +148,18 @@ install_ase_studio_dependencies() {
             sudo "${manager}" install -y git python3-gobject gtk3 webkit2gtk4.1
             ;;
         Arch)
-            sudo pacman -Syu --needed --noconfirm git python-gobject gtk3 webkit2gtk-4.1
+            local sync=-Syu
+            [[ "${ASE_PACKAGE_INDEX_READY:-0}" != 1 ]] || sync=-S
+            sudo pacman "${sync}" --needed --noconfirm git python-gobject gtk3 webkit2gtk-4.1
             ;;
     esac
 }
 
 install_ase_studio() {
-    install_ase_studio_dependencies
+    if ! command -v git >/dev/null 2>&1 ||
+        ! python3 -c 'import gi; gi.require_version("Gtk", "3.0"); gi.require_version("WebKit2", "4.1")' 2>/dev/null; then
+        install_ase_studio_dependencies
+    fi
     if [[ ! -f "${WORK_DIR}/ase_studio/install.sh" ]]; then
         if [[ -f "${WORK_DIR}/.gitmodules" ]]; then
             git -C "${WORK_DIR}" submodule update --init --recursive ase_studio
@@ -152,12 +185,14 @@ set_setup_export() {
 
 update_setup_default() {
     local frontend="$1"
-    set_setup_export RISCV_TOOLCHAIN_PATH 'export RISCV_TOOLCHAIN_PATH="${WORK_DIR}/tools/riscv-toolchain/bin"'
-    set_setup_export CC 'export CC="${RISCV_TOOLCHAIN_PATH}/riscv64-unknown-elf-gcc"'
-    set_setup_export OBJDUMP 'export OBJDUMP="${RISCV_TOOLCHAIN_PATH}/riscv64-unknown-elf-objdump"'
-    set_setup_export CC_INSTALLATION_PATH 'export CC_INSTALLATION_PATH="${RISCV_TOOLCHAIN_PATH}/"'
-    set_setup_export GEM5_INSTALLATION_PATH 'export GEM5_INSTALLATION_PATH="${WORK_DIR}/tools/gem5/build/"'
-    set_setup_export GEM5_SRC 'export GEM5_SRC="${WORK_DIR}/tools/gem5"'
+    if [[ -n "${SELECTED_TOOLCHAIN_BIN:-}" ]]; then
+        # Keep the tracked defaults portable; save this installation's selection
+        # as data, not executable shell code, in the ignored tools directory.
+        local selection_file
+        selection_file=$(mktemp "${ROOT_DIR}/.toolchain.XXXXXX")
+        printf '%s\n%s\n' "${SELECTED_TOOLCHAIN_BIN}" "${SELECTED_TOOLCHAIN_PREFIX}" > "${selection_file}"
+        mv -f "${selection_file}" "${ROOT_DIR}/toolchain.path"
+    fi
     if [[ "${frontend}" == "ase" ]]; then
         set_setup_export PIPELINE_VISUALIZER 'export PIPELINE_VISUALIZER="${WORK_DIR}/ase-studio.sh"'
     fi
@@ -180,16 +215,28 @@ case "${command}" in
     *) usage >&2; exit 2 ;;
 esac
 
+TOOLCHAIN_MODE="${TOOLCHAIN_MODE:-auto}"
+case "${TOOLCHAIN_MODE}" in
+    auto|source) ;;
+    *) install_error "TOOLCHAIN_MODE must be auto or source."; exit 2 ;;
+esac
+export TOOLCHAIN_MODE
+unset SELECTED_TOOLCHAIN_BIN SELECTED_TOOLCHAIN_PREFIX
+select_build_jobs
+# Do not trust a refresh marker inherited from an earlier invocation.
+export ASE_PACKAGE_INDEX_READY=0
+echo "Build parallelism: ${BUILD_JOBS} jobs (override with BUILD_JOBS)."
+record_install_event configuration "" "" "${command}"
 mkdir -p "${ROOT_DIR}"
 detect_distribution
 case "${command}" in
     toolchain) install_native_component toolchain; update_setup_default none ;;
     gem5) install_native_component gem5; update_setup_default none ;;
-    ase-studio) install_ase_studio; update_setup_default ase ;;
+    ase-studio) run_install_stage "Installing ASE Studio" install_ase_studio; update_setup_default ase ;;
     all-ase)
         install_native_component toolchain
         install_native_component gem5
-        install_ase_studio
+        run_install_stage "Installing ASE Studio" install_ase_studio
         update_setup_default ase
         ;;
 esac

@@ -6,17 +6,34 @@ export WORK_DIR="${SETUP_ROOT}"
 ###############################################
 #########   CROSS COMPILER RISCV  #############
 ###############################################
+INSTALLED_TOOL_PREFIX=""
+if [[ -z "${RISCV_TOOLCHAIN_PATH:-}" && -r "${WORK_DIR}/tools/toolchain.path" ]]; then
+    {
+        IFS= read -r RISCV_TOOLCHAIN_PATH || true
+        IFS= read -r INSTALLED_TOOL_PREFIX || true
+    } < "${WORK_DIR}/tools/toolchain.path"
+fi
 export RISCV_TOOLCHAIN_PATH="${RISCV_TOOLCHAIN_PATH:-${WORK_DIR}/tools/riscv-toolchain/bin}"
 if [[ -d "${RISCV_TOOLCHAIN_PATH}/bin" ]]; then
     export RISCV_TOOLCHAIN_PATH="${RISCV_TOOLCHAIN_PATH}/bin"
 fi
 RISCV_TOOL_PREFIX=""
-for prefix in riscv-none-elf riscv64-unknown-elf riscv32-unknown-elf riscv64-linux-gnu riscv32-linux-gnu; do
+for prefix in "${INSTALLED_TOOL_PREFIX}" riscv-none-elf riscv64-unknown-elf riscv64-elf riscv32-unknown-elf riscv64-linux-gnu riscv32-linux-gnu; do
+    [[ -n "${prefix}" ]] || continue
     if [[ -x "${RISCV_TOOLCHAIN_PATH}/${prefix}-gcc" && -x "${RISCV_TOOLCHAIN_PATH}/${prefix}-objdump" ]]; then
         RISCV_TOOL_PREFIX="${prefix}"
         break
     fi
 done
+if [[ -z "${RISCV_TOOL_PREFIX}" ]]; then
+    for compiler in "${RISCV_TOOLCHAIN_PATH}"/riscv*-gcc; do
+        if [[ -x "${compiler}" && -x "${compiler%-gcc}-objdump" ]]; then
+            RISCV_TOOL_PREFIX="${compiler##*/}"
+            RISCV_TOOL_PREFIX="${RISCV_TOOL_PREFIX%-gcc}"
+            break
+        fi
+    done
+fi
 RISCV_TOOL_PREFIX="${RISCV_TOOL_PREFIX:-riscv64-unknown-elf}"
 export CC="${RISCV_TOOLCHAIN_PATH}/${RISCV_TOOL_PREFIX}-gcc"
 export OBJDUMP="${RISCV_TOOLCHAIN_PATH}/${RISCV_TOOL_PREFIX}-objdump"
@@ -45,7 +62,7 @@ export RESULTS_DIR="${WORK_DIR}/results"
 
 if [[ ! -d  "${RESULTS_DIR}" ]] ; then 
 echo "Creating ${RESULTS_DIR}"
-mkdir ${RESULTS_DIR} 
+mkdir -p "${RESULTS_DIR}"
 fi 
 
 ## util path from gem5 rep

@@ -1,9 +1,6 @@
 #!/bin/bash
-
-if [[ -d "${ROOT_DIR}/gem5/" ]]; then 
-    echo "gem5 directory already exists. Skipping Remove it if you want to reinstall"
-	exit 1
-fi
+set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/install_build.sh"
 
 ##############################################################################
 
@@ -14,13 +11,33 @@ fi
 
 ##############################################################################
 
-pacman -Syu --noconfirm
+if [[ "${ASE_PACKAGE_INDEX_READY:-0}" != 1 ]]; then
+    pacman -Syu --noconfirm
+fi
 
 # Install gem5 dependencies for Arch Linux
-pacman -S --needed --noconfirm base-devel git m4 scons zlib protobuf gperftools python boost pkg-config tk python-virtualenv hdf5 python-pydot mypy capstone libpng libelf wget cmake doxygen
-# Install Python 3.10 from source
-su $(logname) -c "git clone https://aur.archlinux.org/python310.git"
-cd python310
-su $(logname) -c "makepkg -si"
+pacman -S --needed --noconfirm base-devel git m4 zlib protobuf gperftools python boost pkg-config python-virtualenv hdf5 capstone libpng libelf
+# Explicit interpreter overrides are supplied with their own development files.
+if [[ -z "${GEM5_PYTHON:-}" ]] &&
+    { ! command -v python3.10 >/dev/null || ! command -v python3.10-config >/dev/null; }; then
+    select_build_jobs
+    build_user="${SUDO_USER:-$(logname)}"
+    if [[ "${build_user}" == root ]]; then
+        echo "Run the installer with sudo from your normal user account." >&2
+        exit 1
+    fi
+    aur_dir="${WORK_DIR}/python310"
+    if [[ ! -d "${aur_dir}" ]]; then
+        runuser -u "${build_user}" -- git clone --depth 1 https://aur.archlinux.org/python310.git "${aur_dir}"
+    fi
+    # Command-line makepkg variables override makepkg.conf without editing it.
+    # Existing package archives are reused by makepkg on a retry.
+    runuser -u "${build_user}" -- bash -c \
+        'set -e; cd "$1"; options=(-si --needed "MAKEFLAGS=-j$2");
+         [[ "${3:-0}" != 1 ]] || options+=(--noconfirm);
+         exec makepkg "${options[@]}"' bash "${aur_dir}" "${BUILD_JOBS}" "${ASE_INSTALL_NONINTERACTIVE:-0}"
+fi
+
+command -v "${GEM5_PYTHON:-python3.10}" >/dev/null
 
 exit 0

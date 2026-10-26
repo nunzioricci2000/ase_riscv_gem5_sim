@@ -11,14 +11,6 @@ else
 fi
 pkg() { if [[ $EUID -eq 0 ]]; then "$PKG" "$@"; else sudo "$PKG" "$@"; fi; }
 
-
-##############################################################################
-
-if [[ -d "${ROOT_DIR}/riscv-toolchain/" ]]; then 
-    echo "riscv-gnu-toolchain directory already exists. Skipping. Remove it if you want to reinstall"
-	exit 0
-fi
-
 ##############################################################################
 
 if [[ $EUID -ne 0 ]]; then
@@ -28,10 +20,7 @@ fi
 
 ##############################################################################
 
-
-pkg -y install gcc gcc-c++
-
-pkg -y install \
+pkg -y install gcc gcc-c++ \
   autoconf \
   automake \
   autoconf-archive \

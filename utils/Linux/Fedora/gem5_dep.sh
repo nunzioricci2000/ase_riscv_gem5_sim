@@ -23,8 +23,12 @@ pkg() { if [[ $EUID -eq 0 ]]; then "$PKG" "$@"; else sudo "$PKG" "$@"; fi; }
 
 # Build deps for gem5
 pkg install -y \
-  gcc gcc-c++ make git m4 scons zlib-devel protobuf-devel protobuf-compiler \
-  gperftools-devel python3-devel boost-devel pkgconfig clang-format \
+  gcc gcc-c++ make git m4 zlib-devel protobuf-devel protobuf-compiler \
+  gperftools-devel boost-devel pkgconfig \
   python3-virtualenv cmake python3-pip libstdc++-devel
+
+if [[ -z "${GEM5_PYTHON:-}" ]]; then
+  pkg install -y python3.10 python3.10-devel
+fi
 
 exit 0
