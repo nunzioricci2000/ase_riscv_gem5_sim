@@ -65,3 +65,10 @@ g5v_pipeline.txt
 
 # Default location for installation
 tools/
+
+# Personal workspace data (tracked examples remain tracked)
+/programs/*/
+!/programs/example/
+/python310/
+/*-pipeline-cycle-*.csv
+/ASE Studio Fork.desktop

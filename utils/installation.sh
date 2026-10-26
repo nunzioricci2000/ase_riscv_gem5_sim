@@ -6,7 +6,7 @@ ROOT_DIR="${WORK_DIR}/tools"
 UTILS_DIR="${WORK_DIR}/utils"
 OS="$(uname -s)"
 ARCH="$(uname -m)"
-ASE_STUDIO_REPOSITORY="https://github.com/cad-polito-it/ase-studio.git"
+ASE_STUDIO_REPOSITORY="${ASE_STUDIO_REPOSITORY:-}"
 BRANCH_CONFIG="${WORK_DIR}/ase_studio_branches.json"
 if [[ ! -f "${BRANCH_CONFIG}" ]]; then
     echo "Missing ASE Studio branch configuration: ${BRANCH_CONFIG}" >&2
@@ -164,6 +164,10 @@ install_ase_studio() {
         if [[ -f "${WORK_DIR}/.gitmodules" ]]; then
             git -C "${WORK_DIR}" submodule update --init --recursive ase_studio
         else
+            if [[ -z "${ASE_STUDIO_REPOSITORY}" ]]; then
+                echo "Set ASE_STUDIO_REPOSITORY to your Studio fork URL when installing without .gitmodules." >&2
+                return 1
+            fi
             git clone "${ASE_STUDIO_REPOSITORY}" "${WORK_DIR}/ase_studio"
         fi
     else

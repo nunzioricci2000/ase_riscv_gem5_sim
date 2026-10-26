@@ -236,3 +236,24 @@ sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1
 - Antonio Porsia (antonio.porsia@polito.it)
 
 Feel free to contribute with issues and pull requests or contact us!
+
+## Personal fork workflow
+
+The personal development branch is `fork/main`. Keep the original projects as
+`upstream` and publish to your own `origin`. The relative Studio submodule URL
+(`../ase-studio.git`) resolves to the Studio repository under the same GitHub
+owner as the simulator fork. Publish the Studio commit before publishing a
+simulator commit that pins it.
+
+Launch the pinned Studio with `./ase-studio.sh`. To preview the independent
+Monaco worktree, use:
+
+```bash
+ASE_STUDIO_HOST_ROOT="$PWD" ASE_STUDIO_PORT=8766 ../ase-studio-monaco/launch.sh
+```
+
+Studio validates runtime files without switching branches. App updates only
+fast-forward from `origin`; commit or stash tracked local edits first. Upstream
+changes are reviewed and integrated explicitly with Git. Personal program
+directories, pipeline exports, results and the local Python environment are
+excluded from new commits. Existing tracked examples remain versioned.
