@@ -18,11 +18,11 @@ This README provides an environment for simulating a program on a parametrizable
 ## Setup the environment 
 First of all, you need to clone the repository with the following command, for SSH:
 ```
-$ git clone --recurse-submodules git@github.com:cad-polito-it/ase_riscv_gem5_sim.git
+$ git clone --recurse-submodules git@github.com:nunzioricci2000/ase_riscv_gem5_sim.git
 ```
 For HTTPS:
 ```
-$ git clone --recurse-submodules https://github.com/cad-polito-it/ase_riscv_gem5_sim.git
+$ git clone --recurse-submodules https://github.com/nunzioricci2000/ase_riscv_gem5_sim.git
 ```
 
 ### Prerequisites
@@ -212,7 +212,7 @@ configuration in `setup_default`. When cloning this
 repository, initialize the submodule as well:
 
 ```bash
-git clone --recurse-submodules https://github.com/cad-polito-it/ase_riscv_gem5_sim.git
+git clone --recurse-submodules https://github.com/nunzioricci2000/ase_riscv_gem5_sim.git
 cd ase_riscv_gem5_sim
 git submodule update --init --recursive
 ```
