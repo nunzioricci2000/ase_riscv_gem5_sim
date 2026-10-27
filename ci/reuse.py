@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: reuse verified SDKs independently of Actions cache eviction.
 # Modified in the personal fork on 2026-10-27: prefer complete SDK/source pairs and support older unindexed artifacts.
+# Modified in the personal fork on 2026-10-27: recover proven component identities from early cache reports.
 """Recover verified components or a complete SDK; always test the resulting binaries."""
 import hashlib
 import io
@@ -20,16 +21,33 @@ def api(route):
     return subprocess.check_output(['gh', 'api', route])
 
 
+def component_keys(report):
+    if 'component_keys' in report:
+        return report['component_keys']
+    # Early incremental builds recorded identities in cache events only. A miss
+    # does not prove which binary was installed; require a successful operation.
+    keys = {}
+    for event in report.get('component_cache', []):
+        if (event.get('action'), event.get('status')) not in {
+                ('save', 'saved'), ('restore', 'hit'), ('restore', 'artifact-hit')}:
+            continue
+        name, key = event['component'], event['key']
+        if name in keys and keys[name] != key:
+            raise ValueError(f'Ambiguous previous component identity: {name}')
+        keys[name] = key
+    return keys
+
+
 def matching(report, requested, target):
     return (report.get('status') == 'succeeded'
             and report.get('target', {}).get('id') == target
-            and any(report.get('component_keys', {}).get(name) == key
+            and any(component_keys(report).get(name) == key
                     for name, key in requested.items()))
 
 
 def complete_match(report, requested, bundle_key):
     return (bool(bundle_key) and report.get('bundle_key') == bundle_key
-            and report.get('component_keys') == requested)
+            and component_keys(report) == requested)
 
 
 def checksum(path):
@@ -64,7 +82,7 @@ def unpack_verified(download, destination, target, requested, bundle_key):
                 temporary.replace(destination / name)
             finally:
                 temporary.unlink(missing_ok=True)
-        return dict(archive=binary, component_keys=report['component_keys'],
+        return dict(archive=binary, component_keys=component_keys(report),
                     sha256=entries[binary]['sha256'], whole_sdk=whole,
                     bundle_key=report.get('bundle_key'),
                     archives={name: entries[name] for name in selected})
@@ -136,7 +154,7 @@ def main():
             continue
         whole = complete_match(report, requested, bundle_key)
         if whole or not all_cached:
-            score = (whole, sum(report['component_keys'].get(n) == k for n, k in requested.items()))
+            score = (whole, sum(component_keys(report).get(n) == k for n, k in requested.items()))
             candidates.append((score, index['workflow_run']['id']))
     seen = set()
     for _, run_id in sorted(candidates, key=lambda c: c[0], reverse=True):
