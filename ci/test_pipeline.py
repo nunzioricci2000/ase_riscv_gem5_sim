@@ -5,6 +5,7 @@
 # Modified in the personal fork on 2026-10-27: ignore lookup indexes when verifying distributable artifacts.
 # Modified in the personal fork on 2026-10-27: reject misleading compilation counts from configure probes.
 # Modified in the personal fork on 2026-10-27: preserve the actual build failure instead of optional-probe diagnostics.
+# Modified in the personal fork on 2026-10-27: include shared-object compile actions in timing reports.
 import importlib.util
 import hashlib
 import json
@@ -49,8 +50,9 @@ class PipelineTests(unittest.TestCase):
             log.write_text(" [ CXX] configure probe\nscons: Building targets ...\n"
                            "Retrieved `build/RISCV/one.o' from cache\n"
                            " [ CXX] changed.cc -> changed.o\n [ CC] helper.c -> helper.o\n"
+                           " [ SHCXX] shared.cc -> shared.os\n [ SHCC] shared.c -> shared.os\n"
                            " [ LINK] -> gem5.opt\nscons: done building targets.\n [ CXX] diagnostic tail\n")
-            self.assertEqual(build.gem5_work(log), dict(build_started=True, compile_actions=2,
+            self.assertEqual(build.gem5_work(log), dict(build_started=True, compile_actions=4,
                                                        link_actions=1, cache_retrievals=1))
             log.write_text('gem5 component restored from cache\n')
             self.assertEqual(build.gem5_work(log), dict(build_started=False, compile_actions=0,

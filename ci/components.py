@@ -3,6 +3,7 @@
 # Created in the personal fork on 2026-10-27: verified reuse of completed build components.
 # Modified in the personal fork on 2026-10-27: include the TimeBuffer runtime patch in gem5 identity.
 # Modified in the personal fork on 2026-10-27: identify and restore complete source-paired SDKs.
+# Modified in the personal fork on 2026-10-27: include the DRAMPower C++17 patch in cached identities.
 """Cache components independently; SCons separately caches intermediate gem5 objects."""
 import hashlib
 import copy
@@ -44,7 +45,8 @@ def identity(component, repo, output, env):
         inputs.update(python=identity('python', repo, output, env), scons=lock['scons_sha256'],
                       linker=env['GEM5_LINKER'],
                       patches={name: digest(repo / name) for name in
-                               ('utils/patch_gem5.py', 'utils/gem5-runtime.patch', 'utils/gem5-timebuffer.patch')},
+                               ('utils/patch_gem5.py', 'utils/gem5-runtime.patch', 'utils/gem5-timebuffer.patch',
+                                'utils/gem5-cxx17.patch')},
                       patch_recipe=(repo / 'ci/package.py').read_text().split(
                           'elif phase == "patch-gem5":')[1].split('elif phase == "stage":')[0])
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
@@ -58,7 +60,8 @@ def bundle_identity(repo, keys, env):
                 paths.add(path)
     paths.update(repo / name for name in ('LICENSE', 'THIRD_PARTY.md', 'DISTRIBUTION.md', 'RELEASES.md',
                  'utils/patch_gem5.py', 'utils/gem5-runtime.patch', 'utils/gem5-runtime.patch.license',
-                 'utils/gem5-timebuffer.patch', 'utils/gem5-timebuffer.patch.license'))
+                 'utils/gem5-timebuffer.patch', 'utils/gem5-timebuffer.patch.license',
+                 'utils/gem5-cxx17.patch', 'utils/gem5-cxx17.patch.license'))
     inputs = dict(schema=1, components=keys, jobs=env['BUILD_JOBS'],
                   files={str(p.relative_to(repo)): digest(p) for p in sorted(paths)})
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()

@@ -4,6 +4,7 @@
 # Modified in the personal fork on 2026-10-27: include shared patch tooling in rebuild sources.
 # Modified in the personal fork on 2026-10-27: test FP execution on Minor/O3 and ship TimeBuffer fix sources.
 # Modified in the personal fork on 2026-10-27: restore and retest exact SDK/source pairs without rebuilding.
+# Modified in the personal fork on 2026-10-27: distribute the DRAMPower comparator patch and BSD notices.
 # Created in the personal fork on 2026-10-27: source-complete engine SDK packaging.
 """Called inside the target build environment by steps.sh."""
 import json
@@ -215,7 +216,7 @@ def main():
                         dest = bundle / "licenses" / component / relative
                         dest.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(src, dest)
-        for name in ("gem5-runtime.patch.license", "gem5-timebuffer.patch.license"):
+        for name in ("gem5-runtime.patch.license", "gem5-timebuffer.patch.license", "gem5-cxx17.patch.license"):
             destination = bundle / "licenses/gem5" / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(repo / "utils" / name, destination)
@@ -262,7 +263,8 @@ def main():
         extras += [(repo / name, f"project/{name}") for name in ("LICENSE", "THIRD_PARTY.md", "DISTRIBUTION.md", "RELEASES.md")]
         extras += [(repo / 'utils' / name, f'project/utils/{name}') for name in
                    ('patch_gem5.py', 'gem5-runtime.patch', 'gem5-runtime.patch.license',
-                    'gem5-timebuffer.patch', 'gem5-timebuffer.patch.license')]
+                    'gem5-timebuffer.patch', 'gem5-timebuffer.patch.license',
+                    'gem5-cxx17.patch', 'gem5-cxx17.patch.license')]
         extras += [(p, f"build-tools/{p.name}") for p in (sources / "build-tools").iterdir()]
         source_archive(output / f"ase-engine-{target}-sources.tar.gz",
                        {name: sources / name for name in ("gem5", "python", "toolchain")}, extras)

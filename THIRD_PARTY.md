@@ -5,6 +5,7 @@
 <!-- Modified in the personal fork on 2026-10-27: document pinned engine build components. -->
 <!-- Modified in the personal fork on 2026-10-27: document embedded Python build environment patch. -->
 <!-- Modified in the personal fork on 2026-10-27: document TimeBuffer initialization fix. -->
+<!-- Modified in the personal fork on 2026-10-27: document DRAMPower C++17 compatibility and retained notices. -->
 
 - **ASE Studio** is a separate GPL-2.0-only repository at `ase_studio/`.
   Include its LICENSE and THIRD_PARTY.md and its exact pinned source revision.
@@ -37,6 +38,10 @@ See DISTRIBUTION.md before preparing a release.
   optimizing compilers cannot discard their intended zero initialization.
   It preserves the Michigan BSD-style notice, also reproduced in the adjacent
   `.license` file. Both patches are supplied with the corresponding sources.
+  `utils/gem5-cxx17.patch` removes DRAMPower's obsolete `std::binary_function`
+  base while preserving the comparator and its public type aliases. Its original
+  BSD-3-Clause university notices are retained in the source and reproduced in
+  the adjacent `.license` file, which is also included in the binary SDK.
 - RISC-V toolchain `33eb59addcd65b8fd71f69fb42ccd2ea31bcbaf1`: the wrapper's
   LICENSE is not a substitute for its submodules' licenses. GCC
   `6afcc4f6da931eb93f3ab001a0dd9650ea71d1ea` and binutils

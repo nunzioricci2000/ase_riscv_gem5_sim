@@ -6,6 +6,7 @@
 # Modified in the personal fork on 2026-10-27: delay large toolchain downloads until gem5 has built.
 # Modified in the personal fork on 2026-10-27: skip fetch/build/archive for an exact SDK/source pair and retest it.
 # Modified in the personal fork on 2026-10-27: keep compile errors separate from optional configure probes.
+# Modified in the personal fork on 2026-10-27: count shared-object compilation actions as well.
 """Build the engine SDK, preserving failure reports; never publish from this script."""
 import argparse
 from datetime import datetime, timezone
@@ -72,7 +73,7 @@ def gem5_work(log):
                 continue
             if line.startswith("Retrieved ") and " from cache" in line:
                 result["cache_retrievals"] += 1
-            action = re.match(r"\s*\[\s*(CC|CXX|AS|LINK|SHLINK)\s*\]", line)
+            action = re.match(r"\s*\[\s*(CC|CXX|AS|SHCC|SHCXX|SHAS|LINK|SHLINK)\s*\]", line)
             if action:
                 key = "link_actions" if action[1] in ("LINK", "SHLINK") else "compile_actions"
                 result[key] += 1
