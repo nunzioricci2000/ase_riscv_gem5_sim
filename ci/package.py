@@ -147,6 +147,14 @@ def main():
         # Preserve the original BSD notice; do not relabel upstream code GPL.
         path.write_text(content.replace(old, new).replace("Import('*')",
             "# Modified in the personal fork on 2026-10-27: retain protobuf transitive link flags.\nImport('*')", 1))
+        path = sources / 'gem5/site_scons/gem5_scons/defaults.py'
+        content = path.read_text()
+        old = '            "LD_LIBRARY_PATH",\n'
+        if content.count(old) != 1:
+            raise RuntimeError('Pinned gem5 Python environment patch context changed')
+        path.write_text(content.replace(old, old +
+            '            "DYLD_LIBRARY_PATH",\n            "PYTHONHOME",\n').replace(
+                'import os\n', '# Modified in the personal fork on 2026-10-27: preserve the embedded Python runtime environment.\nimport os\n', 1))
     elif phase == "stage":
         bundle.mkdir(parents=True)
         shutil.copytree(prefix / "toolchain", bundle / "toolchain", symlinks=True)

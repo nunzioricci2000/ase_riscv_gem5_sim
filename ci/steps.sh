@@ -155,7 +155,17 @@ gem5-build)
         options+=("M5_BUILD_CACHE=$ASE_CACHE/objects/$fingerprint")
     fi
     cd "$sources/gem5"
-    "$prefix/python/bin/python3.10" -m SCons "${options[@]}"
+    if PYTHONHOME="$prefix/python" "$prefix/python/bin/python3.10" -m SCons "${options[@]}"; then
+        :
+    else
+        code=$?
+        # Preserve the actual configure/linker error, not just SCons's summary.
+        if [[ -f build/RISCV/gem5.build/scons_config.log ]]; then
+            cp build/RISCV/gem5.build/scons_config.log "$ASE_OUTPUT/gem5-scons-config.log"
+            tail -n 90 "$ASE_OUTPUT/gem5-scons-config.log"
+        fi
+        exit "$code"
+    fi
     python3 "$ASE_REPO/ci/components.py" save gem5
     ;;
 stage|smoke|sources|archive)

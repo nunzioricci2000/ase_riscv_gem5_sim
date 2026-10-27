@@ -3,6 +3,7 @@
 <!-- SPDX-License-Identifier: GPL-2.0-only -->
 <!-- Created in the personal fork on 2026-10-27: record licensing boundaries. -->
 <!-- Modified in the personal fork on 2026-10-27: document pinned engine build components. -->
+<!-- Modified in the personal fork on 2026-10-27: document embedded Python build environment patch. -->
 
 - **ASE Studio** is a separate GPL-2.0-only repository at `ase_studio/`.
   Include its LICENSE and THIRD_PARTY.md and its exact pinned source revision.
@@ -26,6 +27,8 @@ See DISTRIBUTION.md before preparing a release.
 - gem5 `6169bf94dc3f24b05303d2b4dbfbe765c0a04ac0`: its BSD-style LICENSE and
   per-file/third-party notices remain in force. The protobuf link-flags patch
   preserves its upstream notice and is included in the source snapshot.
+  The SCons environment patch forwards PYTHONHOME and DYLD_LIBRARY_PATH to
+  embedded-Python probes and build helpers, preserving the original BSD notice.
   `utils/gem5-runtime.patch` fixes MinorCPU entry register state and syscall
   draining; it retains the target files’ BSD-style terms. Full ARM notices
   are reproduced in `utils/gem5-runtime.patch.license` and in the patched sources.
