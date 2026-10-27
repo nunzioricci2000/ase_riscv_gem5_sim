@@ -154,6 +154,8 @@ gem5-build)
     "$ASE_WORK/timebuffer-regression"
     export PYTHON_CONFIG="$prefix/python/bin/python3.10-config"
     export PYTHONPATH="$ASE_WORK/scons"
+    # Modified in the personal fork on 2026-10-27: env-python3 generators must match PYTHONHOME.
+    export PATH="$prefix/python/bin:$PATH"
     # Modified in the personal fork on 2026-10-27: supply the library search path
     # omitted by CPython 3.10's macOS python-config (upstream issue 44182).
     # SCons already forwards LIBRARY_PATH to its compiler/linker subprocesses.
@@ -180,7 +182,7 @@ gem5-build)
         # Preserve the actual configure/linker error, not just SCons's summary.
         if [[ -f build/RISCV/gem5.build/scons_config.log ]]; then
             cp build/RISCV/gem5.build/scons_config.log "$ASE_OUTPUT/gem5-scons-config.log"
-            tail -n 90 "$ASE_OUTPUT/gem5-scons-config.log"
+            echo "SCons configuration diagnostics saved to gem5-scons-config.log"
         fi
         exit "$code"
     fi

@@ -4,6 +4,7 @@
 # Modified in the personal fork on 2026-10-27: check unprefixed personal branch routes.
 # Modified in the personal fork on 2026-10-27: ignore lookup indexes when verifying distributable artifacts.
 # Modified in the personal fork on 2026-10-27: reject misleading compilation counts from configure probes.
+# Modified in the personal fork on 2026-10-27: preserve the actual build failure instead of optional-probe diagnostics.
 import importlib.util
 import hashlib
 import json
@@ -29,6 +30,19 @@ build, package, aggregate, gitflow = [module(name) for name in ("build", "packag
 
 
 class PipelineTests(unittest.TestCase):
+    def test_gem5_failure_uses_the_correct_diagnostic_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for started in (False, True):
+                out = Path(directory) / str(started)
+                rec = build.Recorder(out, {'target': {'id': 'test'}})
+                (out / 'gem5-scons-config.log').write_text('configure linker failure')
+                message = ('scons: Building targets ...\nactual compiler failure' if started
+                           else 'Cannot find a working Python installation')
+                with self.assertRaises(subprocess.CalledProcessError):
+                    rec.run('gem5-build', [sys.executable, '-c', f'print({message!r}); raise SystemExit(1)'])
+                expected = 'actual compiler failure' if started else 'configure linker failure'
+                self.assertIn(expected, rec.report['stages'][0]['diagnostic'])
+
     def test_gem5_work_counts_actions_without_configure_probes(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / 'gem5.log'

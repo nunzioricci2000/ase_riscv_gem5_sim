@@ -5,6 +5,7 @@
 # Modified in the personal fork on 2026-10-27: report actual gem5 compilation, linking and object cache retrievals.
 # Modified in the personal fork on 2026-10-27: delay large toolchain downloads until gem5 has built.
 # Modified in the personal fork on 2026-10-27: skip fetch/build/archive for an exact SDK/source pair and retest it.
+# Modified in the personal fork on 2026-10-27: keep compile errors separate from optional configure probes.
 """Build the engine SDK, preserving failure reports; never publish from this script."""
 import argparse
 from datetime import datetime, timezone
@@ -134,8 +135,12 @@ class Recorder:
         finally:
             stage.update(finished_at=utc(), wall_seconds=time.monotonic() - started)
             if stage['status'] != 'succeeded' and (self.output / stage['log']).exists():
-                with (self.output / stage['log']).open('rb') as stream:
-                    stream.seek(max(0, (self.output / stage['log']).stat().st_size - 4000))
+                diagnostic = self.output / stage['log']
+                configuration = self.output / 'gem5-scons-config.log'
+                if name == 'gem5-build' and configuration.exists() and not gem5_work(diagnostic)['build_started']:
+                    diagnostic = configuration
+                with diagnostic.open('rb') as stream:
+                    stream.seek(max(0, diagnostic.stat().st_size - 4000))
                     stage['diagnostic'] = stream.read().decode(errors='replace')
                 print(stage['diagnostic'], flush=True)
             self.save()
