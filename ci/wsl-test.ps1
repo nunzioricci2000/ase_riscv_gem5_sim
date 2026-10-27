@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: measured Windows WSL2 runtime validation.
+# Modified in the personal fork on 2026-10-27: preserve Windows paths and validate conversion before trimming.
 $ErrorActionPreference = 'Stop'
 $outDir = Join-Path $env:RUNNER_TEMP 'ase-wsl-report'
 New-Item -ItemType Directory -Force $outDir | Out-Null
@@ -41,6 +42,14 @@ function Wsl {
     & wsl.exe @args
     if ($LASTEXITCODE -ne 0) { throw "wsl.exe failed: $LASTEXITCODE" }
 }
+function ConvertTo-WslPath([string]$path) {
+    # Forward slashes survive Windows/WSL argument transport; --exec avoids a shell.
+    $result = & wsl.exe -d Ubuntu-24.04 -u root --exec wslpath -u ($path.Replace('\', '/'))
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($result)) {
+        throw "Cannot translate Windows path for WSL: $path (exit $LASTEXITCODE)"
+    }
+    return $result.Trim()
+}
 Save-Report
 try {
     Stage 'install-wsl-distribution' {
@@ -58,8 +67,7 @@ try {
         $report.source_artifact = $sourceReport
     }
     Stage 'dependencies-and-relocated-smoke' {
-        $linuxArtifact = (& wsl.exe -d Ubuntu-24.04 -u root -- wslpath -u $artifact).Trim()
-        if ($LASTEXITCODE -ne 0) { throw 'Cannot translate artifact path' }
+        $linuxArtifact = ConvertTo-WslPath $artifact
         $script = @'
 # SPDX-License-Identifier: GPL-2.0-only
 # Generated from ci/wsl-test.ps1, created on 2026-10-27.
@@ -78,9 +86,8 @@ ASE_REPO=. ASE_WORK=unused ASE_OUTPUT=/tmp/ase-wsl-test/results ASE_TARGET=unuse
 '@
         $scriptPath = Join-Path $outDir 'wsl-smoke.sh'
         [IO.File]::WriteAllText($scriptPath, ($script -replace "`r", ''), [Text.UTF8Encoding]::new($false))
-        $linuxScript = (& wsl.exe -d Ubuntu-24.04 -u root -- wslpath -u $scriptPath).Trim()
-        if ($LASTEXITCODE -ne 0) { throw 'Cannot translate smoke script path' }
-        Wsl -d Ubuntu-24.04 -u root -- bash $linuxScript $linuxArtifact
+        $linuxScript = ConvertTo-WslPath $scriptPath
+        Wsl -d Ubuntu-24.04 -u root --exec bash $linuxScript $linuxArtifact
     }
     $report.status = 'succeeded'
 } catch {

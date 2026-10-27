@@ -3,6 +3,7 @@
 <!-- Modified in the personal fork on 2026-10-27: use main/develop and original/ branch names. -->
 <!-- Modified in the personal fork on 2026-10-27: document automatic builds on main pushes. -->
 <!-- Modified in the personal fork on 2026-10-27: add direct artifact download instructions. -->
+<!-- Modified in the personal fork on 2026-10-27: default component reuse and document diagnostics. -->
 # Engine packages and Gitflow
 
 The build workflow produces **experimental engine SDKs**, not a cross-platform
@@ -45,12 +46,22 @@ each target completes; pushing to `main` does not publish a GitHub Release.
 For a controlled experiment, open **Actions → Build engine packages → Run workflow**.
 Choose a branch, target IDs (`all`, `linux`, or comma-separated IDs), `full` or
 `minimal` toolchain profile, compiler jobs, linker and whether to restore the
-SCons cache. The full profile is the default. Minimal omits GDB and restricts
+component and SCons caches. Reuse is enabled by default, including automatic
+push builds. Python, the toolchain and gem5 have separate content identities:
+source revision, component recipes, platform, compiler and installed libraries.
+gem5 additionally includes its patches, Python identity, SCons and linker;
+the toolchain includes its multilib profile. An unchanged component is restored
+after verifying its archive checksum. Changed gem5 inputs fall back to SCons's
+dependency/object cache. Completed components are saved even if a later build
+stage fails. Cache eviction or a missing cache causes a normal source build.
+Every package still undergoes the relocated compile/simulation smoke tests.
+The full profile is the default. Minimal omits GDB and restricts
 multilib to RV32IMAC/ILP32 and RV64GC/LP64D; both preserve the assembly/runtime
 smoke tests. Python is built without PGO/LTO. gem5 stays `opt` with pipeline
 tracing enabled; switching to `fast` would invalidate that requirement.
 
-Each matrix job has a 350-minute limit; at most three execute concurrently.
+Each matrix job has a 350-minute limit; up to nine execute concurrently,
+subject to GitHub's available runner capacity.
 Compilation is expensive. Normal feature/develop pushes run only offline
 checks. Main/release/hotfix pushes and version tags build the entire matrix.
 GitHub runner storage/concurrency limits still apply. Linux jobs free known
@@ -92,6 +103,10 @@ setup, checkout, cache and artifact upload. It is a snapshot taken during the
 report job, so the report job's own final upload/end and a subsequent release
 job are not yet present. Missing or cancelled targets appear explicitly.
 No parallel-build aggregate RAM measurement or unmeasured speedup is claimed.
+Failed phases include the last 4 KiB of their diagnostic log in both reports.
+Component cache hits/misses and transfer times are recorded separately from
+GitHub's outer cache restore. The Windows validation can also be rerun against
+an existing Ubuntu artifact via **Validate existing package on WSL**.
 
 Local Linux invocation (requires Docker; performs real downloads/builds):
 

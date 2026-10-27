@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: measured multi-platform builds.
+# Modified in the personal fork on 2026-10-27: expose failures and component reuse; compile gem5 first.
 """Build the engine SDK, preserving failure reports; never publish from this script."""
 import argparse
 from datetime import datetime, timezone
@@ -16,7 +17,7 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 PHASES = ("dependencies", "environment", "fetch", "python-configure", "python-build",
-          "toolchain-configure", "toolchain-build", "gem5-build", "stage", "smoke",
+          "gem5-build", "toolchain-configure", "toolchain-build", "stage", "smoke",
           "sources", "archive")
 
 
@@ -106,10 +107,17 @@ class Recorder:
             raise
         finally:
             stage.update(finished_at=utc(), wall_seconds=time.monotonic() - started)
+            if stage['status'] != 'succeeded' and (self.output / stage['log']).exists():
+                with (self.output / stage['log']).open('rb') as stream:
+                    stream.seek(max(0, (self.output / stage['log']).stat().st_size - 4000))
+                    stage['diagnostic'] = stream.read().decode(errors='replace')
+                print(stage['diagnostic'], flush=True)
             self.save()
 
     def finish(self, status, error=None):
         self.report.update(status=status)
+        cache_events = self.output / 'component-cache.jsonl'
+        self.report['component_cache'] = [json.loads(line) for line in cache_events.read_text().splitlines()] if cache_events.exists() else []
         if error:
             self.report["error"] = str(error)
         self.report["artifacts"] = [dict(name=p.name, bytes=p.stat().st_size, sha256=digest(p))
@@ -123,6 +131,14 @@ class Recorder:
         for stage in self.report["stages"]:
             lines.append(f"| {stage['name']} | {stage['started_at']} | {stage['finished_at']} | "
                          f"{stage['wall_seconds']:.3f} | {stage['status']} |")
+        for stage in self.report['stages']:
+            if stage.get('diagnostic'):
+                lines += ['', f"Failure in {stage['name']} ({stage['log']}):", '', '```text',
+                          stage['diagnostic'].replace('```', "'''"), '```']
+        if self.report['component_cache']:
+            lines += ['', 'Component reuse:'] + [
+                f"- {e['component']}: {e['action']} {e['status']} ({e['seconds']:.2f}s)"
+                for e in self.report['component_cache']]
         (self.output / "report.md").write_text("\n".join(lines) + "\n")
         (self.output / "SHA256SUMS").write_text("".join(
             f"{item['sha256']}  {item['name']}\n" for item in self.report["artifacts"]))

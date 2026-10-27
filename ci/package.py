@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
 # Modified in the personal fork on 2026-10-27: apply the shared gem5 register and syscall fixes.
+# Modified in the personal fork on 2026-10-27: include shared patch tooling in rebuild sources.
 # Created in the personal fork on 2026-10-27: source-complete engine SDK packaging.
 """Called inside the target build environment by steps.sh."""
 import json
@@ -211,6 +212,8 @@ def main():
         extras = [(repo / "ci", "project/ci"), (repo / "gem5", "project/gem5"),
                   (repo / ".github/workflows", "project/.github/workflows")]
         extras += [(repo / name, f"project/{name}") for name in ("LICENSE", "THIRD_PARTY.md", "DISTRIBUTION.md", "RELEASES.md")]
+        extras += [(repo / 'utils' / name, f'project/utils/{name}') for name in
+                   ('patch_gem5.py', 'gem5-runtime.patch', 'gem5-runtime.patch.license')]
         extras += [(p, f"build-tools/{p.name}") for p in (sources / "build-tools").iterdir()]
         source_archive(output / f"ase-engine-{target}-sources.tar.gz",
                        {name: sources / name for name in ("gem5", "python", "toolchain")}, extras)

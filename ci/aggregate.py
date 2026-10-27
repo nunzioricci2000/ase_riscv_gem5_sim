@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: aggregate complete and missing build reports.
+# Modified in the personal fork on 2026-10-27: surface failure diagnostics and component cache outcomes.
 import argparse
 from datetime import datetime, timezone
 import hashlib
@@ -68,6 +69,14 @@ def markdown(report):
         for stage in row["stages"]:
             lines.append(f"| {stage['name']} | {stage['started_at']} | {stage.get('finished_at', '—')} | "
                          f"{stage.get('wall_seconds', 0):.3f} | {stage['status']} |")
+        if row.get('error'):
+            lines += ['', 'Error: ' + row['error'].replace('\n', ' ')]
+        for stage in row['stages']:
+            if stage.get('diagnostic') or stage.get('error'):
+                lines += ['', f"Diagnostic ({stage['name']}):", '', '```text',
+                          (stage.get('diagnostic') or stage['error']).replace('```', "'''"), '```']
+        for event in row.get('component_cache', []):
+            lines += [f"- Cache {event['component']}: {event['action']} {event['status']} ({event['seconds']:.2f}s)"]
         for artifact in row.get("artifacts", []):
             lines += ["", f"`{artifact['name']}`: {artifact['bytes']} bytes; SHA256 `{artifact['sha256']}`"]
     lines += ["", "## Interpretation", ""] + [f"- {note}" for note in report["notes"]]

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: isolated engine build stages.
+# Modified in the personal fork on 2026-10-27: reuse components and fix portable SCons bootstrap.
 set -euo pipefail
 : "${ASE_REPO:?}" "${ASE_WORK:?}" "${ASE_OUTPUT:?}" "${ASE_FAMILY:?}" "${BUILD_JOBS:?}"
 sources="$ASE_WORK/sources"
@@ -86,8 +87,11 @@ fetch)
     # Only these projects are used by the newlib build; never fetch QEMU/LLVM/glibc.
     git -C "$sources/toolchain" submodule update --init --depth 1 gcc binutils newlib gdb
     python3 "$ASE_REPO/ci/package.py" patch-gem5
-    python3 -m pip download --no-deps --no-binary=:all: --dest "$sources/build-tools" \
-        "scons==$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["scons"])' "$ASE_REPO/ci/sources.lock.json")"
+    # Fetch the pinned source directly: distro pip versions can misread its metadata.
+    mkdir -p "$sources/build-tools"
+    curl --fail --location --retry 3 \
+        'https://files.pythonhosted.org/packages/ec/5c/cc835a17633de8b260ec1a6e527b5c57f4975cee5949f49e57ad4d5fab4b/scons-4.8.0.tar.gz' \
+        --output "$sources/build-tools/scons-4.8.0.tar.gz"
     python3 - "$ASE_REPO/ci/sources.lock.json" "$sources/build-tools" <<'PY'
 import hashlib, json, pathlib, sys
 lock = json.load(open(sys.argv[1]))
@@ -99,6 +103,10 @@ PY
     tar -xf "$sources"/build-tools/scons-*.tar.gz --strip-components=1 -C "$ASE_WORK/scons"
     ;;
 python-configure)
+    if python3 "$ASE_REPO/ci/components.py" restore python; then
+        touch "$ASE_WORK/python-restored"
+        exit 0
+    fi
     mkdir "$ASE_WORK/python-build"
     cd "$ASE_WORK/python-build"
     options=(--prefix="$prefix/python" --enable-shared --with-ensurepip=no)
@@ -107,11 +115,17 @@ python-configure)
     "$sources/python/configure" "${options[@]}"
     ;;
 python-build)
+    [[ ! -f "$ASE_WORK/python-restored" ]] || exit 0
     make -C "$ASE_WORK/python-build" -j "$BUILD_JOBS"
     make -C "$ASE_WORK/python-build" install
     "$prefix/python/bin/python3.10" -c 'import ssl, ctypes, zlib; print(ssl.OPENSSL_VERSION)'
+    python3 "$ASE_REPO/ci/components.py" save python
     ;;
 toolchain-configure)
+    if python3 "$ASE_REPO/ci/components.py" restore toolchain; then
+        touch "$ASE_WORK/toolchain-restored"
+        exit 0
+    fi
     mkdir "$ASE_WORK/toolchain-build"
     cd "$ASE_WORK/toolchain-build"
     options=(--prefix="$prefix/toolchain" --enable-multilib)
@@ -124,20 +138,25 @@ toolchain-configure)
     "$sources/toolchain/configure" "${options[@]}"
     ;;
 toolchain-build)
+    [[ ! -f "$ASE_WORK/toolchain-restored" ]] || exit 0
     make -C "$ASE_WORK/toolchain-build" -j "$BUILD_JOBS" newlib
+    python3 "$ASE_REPO/ci/components.py" save toolchain
     ;;
 gem5-build)
+    if python3 "$ASE_REPO/ci/components.py" restore gem5; then exit 0; fi
     export PYTHON_CONFIG="$prefix/python/bin/python3.10-config"
     export PYTHONPATH="$ASE_WORK/scons"
-    options=()
+    # A nonempty array also works with nounset in macOS's system Bash 3.2.
+    options=(build/RISCV/gem5.opt -j "$BUILD_JOBS")
     [[ "$GEM5_LINKER" == default ]] || options+=("--linker=$GEM5_LINKER")
     if [[ -n "${ASE_CACHE:-}" ]]; then
         # System package changes invalidate object reuse even with a fixed source lock.
         fingerprint=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$ASE_OUTPUT/packages.txt")
-        options+=("M5_BUILD_CACHE=$ASE_CACHE/$fingerprint")
+        options+=("M5_BUILD_CACHE=$ASE_CACHE/objects/$fingerprint")
     fi
     cd "$sources/gem5"
-    "$prefix/python/bin/python3.10" -m SCons build/RISCV/gem5.opt -j "$BUILD_JOBS" "${options[@]}"
+    "$prefix/python/bin/python3.10" -m SCons "${options[@]}"
+    python3 "$ASE_REPO/ci/components.py" save gem5
     ;;
 stage|smoke|sources|archive)
     python3 "$ASE_REPO/ci/package.py" "$1"
