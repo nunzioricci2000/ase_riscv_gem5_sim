@@ -16,7 +16,7 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parent.parent
-PHASES = ("dependencies", "environment", "fetch", "python-configure", "python-build",
+PHASES = ("dependencies", "environment", "reuse", "fetch", "python-configure", "python-build",
           "gem5-build", "toolchain-configure", "toolchain-build", "stage", "smoke",
           "sources", "archive")
 
@@ -118,6 +118,8 @@ class Recorder:
         self.report.update(status=status)
         cache_events = self.output / 'component-cache.jsonl'
         self.report['component_cache'] = [json.loads(line) for line in cache_events.read_text().splitlines()] if cache_events.exists() else []
+        keys = self.output / 'component-keys.json'
+        self.report['component_keys'] = json.loads(keys.read_text()) if keys.exists() else {}
         if error:
             self.report["error"] = str(error)
         self.report["artifacts"] = [dict(name=p.name, bytes=p.stat().st_size, sha256=digest(p))
@@ -223,7 +225,12 @@ def main(argv=None):
                        ASE_CACHE=str(args.cache or ""))
             prefix = ["bash", str(ROOT / "ci/steps.sh")]
         for phase in PHASES:
-            rec.run(phase, prefix + [phase], env, args.stage_timeout)
+            if phase == 'reuse':
+                if args.cache:
+                    rec.run(phase, [sys.executable, str(ROOT / 'ci/reuse.py'), str(output),
+                                   str(work / 'reuse'), target['id'], str(args.cache)], env, args.stage_timeout)
+            else:
+                rec.run(phase, prefix + [phase], env, args.stage_timeout)
         status = "succeeded"
     except subprocess.TimeoutExpired as exc:
         status, error = "timed_out", exc

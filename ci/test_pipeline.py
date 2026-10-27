@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: failure accounting and packaging regressions.
 # Modified in the personal fork on 2026-10-27: check unprefixed personal branch routes.
+# Modified in the personal fork on 2026-10-27: ignore lookup indexes when verifying distributable artifacts.
 import importlib.util
 import hashlib
 import json
@@ -93,6 +94,8 @@ class PipelineTests(unittest.TestCase):
                 artifacts.append(dict(name=name, bytes=7, sha256=hashlib.sha256(b"archive").hexdigest()))
             (root / "report.json").write_text(json.dumps(dict(target={"id": "one"},
                 status="succeeded", stages=[], artifacts=artifacts)))
+            (root / 'engine-index-one').mkdir()
+            (root / 'engine-index-one/report.json').write_bytes((root / 'report.json').read_bytes())
             self.assertTrue(aggregate.aggregate(root, [{"id": "one"}])["all_succeeded"])
             (root / "ase-engine-one-sources.tar.gz").write_bytes(b"damaged")
             report = aggregate.aggregate(root, [{"id": "one"}])

@@ -97,6 +97,7 @@ jobs:
           PROFILE: ${{ inputs.profile || 'full' }}
           LINKER: ${{ inputs.linker || 'default' }}
           USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.cache == true }}
+          GH_TOKEN: ${{ github.token }}
           ASE_CACHE_HIT: ${{ steps.objects.outputs.cache-hit || 'false' }}
           ASE_CACHE_RESTORED_KEY: ${{ steps.objects.outputs.cache-matched-key }}
         shell: bash
@@ -129,6 +130,13 @@ jobs:
           if [[ -f "$RUNNER_TEMP/ase-output/report.md" ]]; then
             cat "$RUNNER_TEMP/ase-output/report.md" >> "$GITHUB_STEP_SUMMARY"
           fi
+      - name: Index verified components for reuse after cache eviction
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: engine-index-${{ matrix.id }}
+          path: ${{ runner.temp }}/ase-output/report.json
+          retention-days: 14
   windows-wsl:
     if: always() && (inputs.wsl_run_id != '' || (needs.plan.result == 'success' && contains(needs.plan.outputs.matrix, 'ubuntu-24.04-x86_64')))
     needs: [plan, build]

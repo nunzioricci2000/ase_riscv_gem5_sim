@@ -55,6 +55,12 @@ after verifying its archive checksum. Changed gem5 inputs fall back to SCons's
 dependency/object cache. Completed components are saved even if a later build
 stage fails. Cache eviction or a missing cache causes a normal source build.
 Every package still undergoes the relocated compile/simulation smoke tests.
+Small `engine-index-TARGET` artifacts index successful SDKs for 14 days. When
+an Actions cache has been evicted, the workflow can download a matching SDK,
+verify its checksum and reuse only components with identical inputs. Lookup
+is restricted to this repository's current branch and main. Missing/expired
+artifacts or failed downloads fall back to a source build; no extra cache
+storage allowance or billing setting is enabled.
 The full profile is the default. Minimal omits GDB and restricts
 multilib to RV32IMAC/ILP32 and RV64GC/LP64D; both preserve the assembly/runtime
 smoke tests. Python is built without PGO/LTO. gem5 stays `opt` with pipeline

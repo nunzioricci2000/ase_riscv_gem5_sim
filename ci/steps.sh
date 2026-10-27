@@ -79,6 +79,7 @@ dependencies)
     ;;
 environment)
     python3 "$ASE_REPO/ci/package.py" environment
+    python3 "$ASE_REPO/ci/components.py" keys all
     ;;
 fetch)
     checkout python

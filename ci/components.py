@@ -3,6 +3,7 @@
 # Created in the personal fork on 2026-10-27: verified reuse of completed build components.
 """Cache components independently; SCons separately caches intermediate gem5 objects."""
 import hashlib
+import copy
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -47,21 +48,56 @@ def identity(component, repo, output, env):
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
 
 
-def extract(archive, destination):
+def extract_members(tar, destination, members):
     """Reject escaping paths/links even if a corrupt cache was restored."""
+    for member in members:
+        path = PurePosixPath(member.name)
+        if path.is_absolute() or '..' in path.parts or not path.parts or path.parts[0] != 'payload':
+            raise ValueError('Unsafe cached path')
+        if member.isdev() or member.isfifo():
+            raise ValueError('Unsupported cached file type')
+        if member.issym() or member.islnk():
+            link = PurePosixPath(member.linkname)
+            target = (destination / member.name).parent / member.linkname if member.issym() else destination / member.linkname
+            if link.is_absolute() or not target.resolve().is_relative_to((destination / 'payload').resolve()):
+                raise ValueError('Unsafe cached link')
+    tar.extractall(destination, members=members)
+
+
+def extract(archive, destination):
     with tarfile.open(archive) as tar:
-        for member in tar.getmembers():
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or '..' in path.parts or not path.parts or path.parts[0] != 'payload':
-                raise ValueError('Unsafe cached path')
-            if member.isdev() or member.isfifo():
-                raise ValueError('Unsupported cached file type')
-            if member.issym() or member.islnk():
-                link = PurePosixPath(member.linkname)
-                target = (destination / member.name).parent / member.linkname if member.issym() else destination / member.linkname
-                if link.is_absolute() or not target.resolve().is_relative_to((destination / 'payload').resolve()):
-                    raise ValueError('Unsafe cached link')
-        tar.extractall(destination)
+        extract_members(tar, destination, tar.getmembers())
+
+
+def restore_sdk(directory, component, key, destination, target):
+    metadata = directory / 'reuse.json'
+    if not metadata.exists():
+        return False
+    record = json.loads(metadata.read_text())
+    if record['component_keys'].get(component) != key:
+        return False
+    prefix = f'ase-engine-{target}/' + ('gem5/bin/gem5.opt' if component == 'gem5' else component)
+    temporary = destination.with_name(destination.name + '.restore')
+    temporary.mkdir(parents=True)
+    try:
+        with tarfile.open(directory / record['archive']) as tar:
+            members = []
+            for entry in tar.getmembers():
+                if entry.name == prefix or entry.name.startswith(prefix + '/'):
+                    member = copy.copy(entry)
+                    member.name = 'payload' + entry.name[len(prefix):]
+                    if member.islnk():
+                        if not member.linkname.startswith(prefix + '/'):
+                            raise ValueError('SDK hard link leaves its component')
+                        member.linkname = 'payload' + member.linkname[len(prefix):]
+                    members.append(member)
+            extract_members(tar, temporary, members)
+        if destination.exists():
+            raise ValueError('Refusing to replace an existing component')
+        (temporary / 'payload').replace(destination)
+    finally:
+        shutil.rmtree(temporary)
+    return True
 
 
 def restore(entry, destination):
@@ -100,6 +136,10 @@ def main():
     action, component = sys.argv[1:]
     env = os.environ
     repo, work, output = (Path(env[k]) for k in ('ASE_REPO', 'ASE_WORK', 'ASE_OUTPUT'))
+    if action == 'keys':
+        keys = {c: identity(c, repo, output, env) for c in ('python', 'toolchain', 'gem5')}
+        (output / 'component-keys.json').write_text(json.dumps(keys, indent=2))
+        return 0
     cache = env.get('ASE_CACHE')
     if not cache:
         return 1 if action == 'restore' else 0
@@ -112,6 +152,8 @@ def main():
         destination.parent.mkdir(parents=True, exist_ok=True)
         hit = restore(entry, destination)
         status = 'hit' if hit else 'miss'
+        if not hit and restore_sdk(work / 'reuse', component, key, destination, env['ASE_TARGET']):
+            hit, status = True, 'artifact-hit'
     elif action == 'save':
         save(entry, destination)
         # Keep one completed variant per target/component; SCons retains object reuse.

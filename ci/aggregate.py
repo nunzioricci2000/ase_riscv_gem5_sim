@@ -15,6 +15,8 @@ def aggregate(root, expected, jobs=None):
         expected.append(dict(id="windows-wsl2-x86_64", experimental=True))
     found = {}
     for path in root.rglob("report.json"):
+        if path.parent.name.startswith('engine-index-'):
+            continue  # Lookup copies; the source-paired engine artifact is authoritative.
         report = json.loads(path.read_text())
         target = report["target"]["id"]
         if target in found:

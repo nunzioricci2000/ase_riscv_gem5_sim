@@ -17,6 +17,24 @@ spec.loader.exec_module(components)
 
 
 class ComponentTests(unittest.TestCase):
+    def test_sdk_reuse_selects_only_matching_component(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sdk = root / 'ase-engine-test'
+            (sdk / 'toolchain/bin').mkdir(parents=True)
+            (sdk / 'toolchain/bin/gcc').write_text('compiler')
+            (sdk / 'toolchain/bin/cc').symlink_to('gcc')
+            (sdk / 'python').mkdir()
+            (sdk / 'python/unrelated').write_text('different component')
+            with tarfile.open(root / 'sdk.tar.gz', 'w:gz') as tar:
+                tar.add(sdk, arcname=sdk.name)
+            (root / 'reuse.json').write_text(json.dumps(dict(archive='sdk.tar.gz',
+                component_keys={'toolchain': 'exact-inputs'})))
+            self.assertFalse(components.restore_sdk(root, 'toolchain', 'other-inputs', root / 'bad', 'test'))
+            self.assertTrue(components.restore_sdk(root, 'toolchain', 'exact-inputs', root / 'restored', 'test'))
+            self.assertEqual((root / 'restored/bin/cc').read_text(), 'compiler')
+            self.assertFalse((root / 'restored/unrelated').exists())
+
     def test_restore_preserves_executables_and_relative_links_and_rejects_corruption(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
