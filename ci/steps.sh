@@ -186,7 +186,8 @@ gem5-build)
     fi
     python3 "$ASE_REPO/ci/components.py" save gem5
     ;;
-stage|smoke|sources|archive)
+stage|smoke|sources|archive|restore-sdk)
+    # Modified in the personal fork on 2026-10-27: allow restoring a complete source-paired SDK.
     python3 "$ASE_REPO/ci/package.py" "$1"
     ;;
 *) echo "Unknown phase: $1" >&2; exit 2 ;;

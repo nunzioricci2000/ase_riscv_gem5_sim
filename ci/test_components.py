@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: check cache invalidation, corruption and safe restoration.
 # Modified in the personal fork on 2026-10-27: cover both independent gem5 runtime patches.
+# Modified in the personal fork on 2026-10-27: verify complete SDK identity and safe paired restoration.
 import importlib.util
 import io
 import json
@@ -18,6 +19,49 @@ spec.loader.exec_module(components)
 
 
 class ComponentTests(unittest.TestCase):
+    def test_bundle_identity_covers_packaging_without_rebuilding_components(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            names = ['ci/package.py', 'gem5/config.py', '.github/workflows/build.yml', 'LICENSE',
+                     'THIRD_PARTY.md', 'DISTRIBUTION.md', 'RELEASES.md', 'utils/patch_gem5.py',
+                     'utils/gem5-runtime.patch', 'utils/gem5-runtime.patch.license',
+                     'utils/gem5-timebuffer.patch', 'utils/gem5-timebuffer.patch.license']
+            for name in names:
+                p = repo / name
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text('original')
+            keys = {'gem5': 'same-component'}
+            def key():
+                return components.bundle_identity(repo, keys, {'BUILD_JOBS': '2'})
+            initial = key()
+            (repo / 'frontend.js').write_text('unbundled frontend change')
+            self.assertEqual(initial, key())
+            (repo / 'gem5/config.py').write_text('changed runtime configuration')
+            self.assertNotEqual(initial, key())
+
+    def test_restore_whole_sdk_rechecks_pair_and_preserves_executables(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sdk = root / 'input/ase-engine-test'
+            (sdk / 'bin').mkdir(parents=True)
+            (sdk / 'bin/gem5').write_text('binary')
+            (sdk / 'bin/gem5').chmod(0o755)
+            binary, source = 'ase-engine-test.tar.gz', 'ase-engine-test-sources.tar.gz'
+            with tarfile.open(root / binary, 'w:gz') as archive:
+                archive.add(sdk, arcname=sdk.name)
+            (root / source).write_bytes(b'corresponding sources')
+            archives = {name: dict(bytes=(root / name).stat().st_size, sha256=components.digest(root / name))
+                        for name in (binary, source)}
+            (root / 'reuse.json').write_text(json.dumps(dict(whole_sdk=True, bundle_key='same', archives=archives)))
+            restored = root / 'output/ase-engine-test'
+            components.restore_bundle(root, 'same', restored)
+            self.assertEqual((restored / 'bin/gem5').read_text(), 'binary')
+            self.assertTrue((restored / 'bin/gem5').stat().st_mode & 0o111)
+            (root / source).write_bytes(b'corrupt')
+            with self.assertRaises(ValueError):
+                components.restore_bundle(root, 'same', root / 'other/ase-engine-test')
+            self.assertFalse((root / 'other/ase-engine-test').exists())
+
     def test_sdk_reuse_selects_only_matching_component(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: verified reuse of completed build components.
 # Modified in the personal fork on 2026-10-27: include the TimeBuffer runtime patch in gem5 identity.
+# Modified in the personal fork on 2026-10-27: identify and restore complete source-paired SDKs.
 """Cache components independently; SCons separately caches intermediate gem5 objects."""
 import hashlib
 import copy
@@ -49,18 +50,32 @@ def identity(component, repo, output, env):
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
 
 
-def extract_members(tar, destination, members):
+def bundle_identity(repo, keys, env):
+    paths = set()
+    for directory in ('ci', 'gem5', '.github/workflows'):
+        for path in (repo / directory).rglob('*'):
+            if path.is_file() and not set(path.parts) & {'.git', '__pycache__'} and path.suffix != '.pyc':
+                paths.add(path)
+    paths.update(repo / name for name in ('LICENSE', 'THIRD_PARTY.md', 'DISTRIBUTION.md', 'RELEASES.md',
+                 'utils/patch_gem5.py', 'utils/gem5-runtime.patch', 'utils/gem5-runtime.patch.license',
+                 'utils/gem5-timebuffer.patch', 'utils/gem5-timebuffer.patch.license'))
+    inputs = dict(schema=1, components=keys, jobs=env['BUILD_JOBS'],
+                  files={str(p.relative_to(repo)): digest(p) for p in sorted(paths)})
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
+
+
+def extract_members(tar, destination, members, root='payload'):
     """Reject escaping paths/links even if a corrupt cache was restored."""
     for member in members:
         path = PurePosixPath(member.name)
-        if path.is_absolute() or '..' in path.parts or not path.parts or path.parts[0] != 'payload':
+        if path.is_absolute() or '..' in path.parts or not path.parts or path.parts[0] != root:
             raise ValueError('Unsafe cached path')
         if member.isdev() or member.isfifo():
             raise ValueError('Unsupported cached file type')
         if member.issym() or member.islnk():
             link = PurePosixPath(member.linkname)
             target = (destination / member.name).parent / member.linkname if member.issym() else destination / member.linkname
-            if link.is_absolute() or not target.resolve().is_relative_to((destination / 'payload').resolve()):
+            if link.is_absolute() or not target.resolve().is_relative_to((destination / root).resolve()):
                 raise ValueError('Unsafe cached link')
     tar.extractall(destination, members=members)
 
@@ -68,6 +83,30 @@ def extract_members(tar, destination, members):
 def extract(archive, destination):
     with tarfile.open(archive) as tar:
         extract_members(tar, destination, tar.getmembers())
+
+
+def restore_bundle(directory, key, destination):
+    record = json.loads((directory / 'reuse.json').read_text())
+    if not record.get('whole_sdk') or record.get('bundle_key') != key:
+        raise ValueError('Complete SDK inputs do not match this build')
+    expected = {destination.name + '.tar.gz', destination.name + '-sources.tar.gz'}
+    if set(record.get('archives', {})) != expected:
+        raise ValueError('Complete SDK requires a matching binary/source pair')
+    for name, metadata in record['archives'].items():
+        path = directory / name
+        if path.stat().st_size != metadata['bytes'] or digest(path) != metadata['sha256']:
+            raise ValueError('Complete SDK checksum mismatch')
+    if destination.exists():
+        raise ValueError('Refusing to replace an existing SDK')
+    temporary = destination.with_name(destination.name + '.restore')
+    temporary.mkdir(parents=True)
+    try:
+        with tarfile.open(directory / (destination.name + '.tar.gz')) as tar:
+            extract_members(tar, temporary, tar.getmembers(), destination.name)
+        (temporary / destination.name).replace(destination)
+    finally:
+        shutil.rmtree(temporary)
+    return record
 
 
 def restore_sdk(directory, component, key, destination, target):
@@ -140,6 +179,7 @@ def main():
     if action == 'keys':
         keys = {c: identity(c, repo, output, env) for c in ('python', 'toolchain', 'gem5')}
         (output / 'component-keys.json').write_text(json.dumps(keys, indent=2))
+        (output / 'bundle-key.txt').write_text(bundle_identity(repo, keys, env) + '\n')
         return 0
     cache = env.get('ASE_CACHE')
     if not cache:

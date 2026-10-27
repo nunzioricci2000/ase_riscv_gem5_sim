@@ -5,6 +5,7 @@
 <!-- Modified in the personal fork on 2026-10-27: add direct artifact download instructions. -->
 <!-- Modified in the personal fork on 2026-10-27: default component reuse and document diagnostics. -->
 <!-- Modified in the personal fork on 2026-10-27: document runtime coverage and incremental build counters. -->
+<!-- Modified in the personal fork on 2026-10-27: document complete SDK reuse and promotion after merging. -->
 # Engine packages and Gitflow
 
 The build workflow produces **experimental engine SDKs**, not a cross-platform
@@ -65,9 +66,20 @@ newer optimizing compilers. Passing these checks is not exhaustive ISA validatio
 Small `engine-index-TARGET` artifacts index successful SDKs for 14 days. When
 an Actions cache has been evicted, the workflow can download a matching SDK,
 verify its checksum and reuse only components with identical inputs. Lookup
-is restricted to this repository's current branch and main. Missing/expired
-artifacts or failed downloads fall back to a source build; no extra cache
+accepts this repository's current branch and main, plus commits from this same
+repository that GitHub confirms are ancestors of the current commit. Thus a
+tested feature build can be reused after its merge into main. Fork PR artifacts
+are excluded. Up to three older artifacts without an index can also be checked;
+their embedded reports must contain matching component identities.
+Missing/expired artifacts or failed downloads fall back to a source build; no extra cache
 storage allowance or billing setting is enabled.
+When the entire package identity also matches (components, configuration files,
+build/package scripts, workflow files, notices and recorded job count), both
+the binary and corresponding source archive are downloaded and checksum-verified.
+The SDK is extracted at the relocated test path and the runtime checks run again;
+source fetching, compilation and archiving are skipped explicitly in the report.
+Dependency installation, transfer, checksum and runtime-test costs remain.
+Disable cache for a source-build timing experiment.
 The full profile is the default. Minimal omits GDB and restricts
 multilib to RV32IMAC/ILP32 and RV64GC/LP64D; both preserve the assembly/runtime
 smoke tests. Python is built without PGO/LTO. gem5 stays `opt` with pipeline

@@ -3,6 +3,7 @@
 # Created in the personal fork on 2026-10-27: aggregate complete and missing build reports.
 # Modified in the personal fork on 2026-10-27: surface failure diagnostics and component cache outcomes.
 # Modified in the personal fork on 2026-10-27: distinguish compilation work from cached outputs.
+# Modified in the personal fork on 2026-10-27: expose complete SDK reuse and explicitly skipped phases.
 import argparse
 from datetime import datetime, timezone
 import hashlib
@@ -84,6 +85,10 @@ def markdown(report):
             work = row['gem5_work']
             lines += ['', f"gem5: {work['compile_actions']} compile actions, "
                       f"{work['link_actions']} link actions, {work['cache_retrievals']} cached outputs retrieved."]
+        if row.get('skipped_phases'):
+            donor = row.get('artifact_reuse', {}).get('run_id', 'unknown')
+            lines += ['', f"SDK/source pair reused from run {donor}; runtime tests executed again.",
+                      'Skipped: ' + ', '.join(row['skipped_phases'])]
         for artifact in row.get("artifacts", []):
             lines += ["", f"`{artifact['name']}`: {artifact['bytes']} bytes; SHA256 `{artifact['sha256']}`"]
     lines += ["", "## Interpretation", ""] + [f"- {note}" for note in report["notes"]]

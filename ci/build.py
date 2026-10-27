@@ -4,6 +4,7 @@
 # Modified in the personal fork on 2026-10-27: expose failures and component reuse; compile gem5 first.
 # Modified in the personal fork on 2026-10-27: report actual gem5 compilation, linking and object cache retrievals.
 # Modified in the personal fork on 2026-10-27: delay large toolchain downloads until gem5 has built.
+# Modified in the personal fork on 2026-10-27: skip fetch/build/archive for an exact SDK/source pair and retest it.
 """Build the engine SDK, preserving failure reports; never publish from this script."""
 import argparse
 from datetime import datetime, timezone
@@ -145,6 +146,11 @@ class Recorder:
         self.report['component_cache'] = [json.loads(line) for line in cache_events.read_text().splitlines()] if cache_events.exists() else []
         keys = self.output / 'component-keys.json'
         self.report['component_keys'] = json.loads(keys.read_text()) if keys.exists() else {}
+        bundle_key = self.output / 'bundle-key.txt'
+        self.report['bundle_key'] = bundle_key.read_text().strip() if bundle_key.exists() else None
+        reused = self.output / 'artifact-reuse.json'
+        if reused.exists():
+            self.report['artifact_reuse'] = json.loads(reused.read_text())
         for stage in self.report['stages']:
             log = self.output / stage['log']
             if stage['name'] == 'gem5-build' and log.exists():
@@ -174,6 +180,9 @@ class Recorder:
             work = self.report['gem5_work']
             lines += ['', f"gem5: {work['compile_actions']} compile actions, "
                       f"{work['link_actions']} link actions, {work['cache_retrievals']} cached outputs retrieved."]
+        if self.report.get('skipped_phases'):
+            lines += ['', 'Verified SDK/source pair reused; skipped: ' + ', '.join(self.report['skipped_phases']),
+                      'Relocated runtime tests were executed again.']
         (self.output / "report.md").write_text("\n".join(lines) + "\n")
         (self.output / "SHA256SUMS").write_text("".join(
             f"{item['sha256']}  {item['name']}\n" for item in self.report["artifacts"]))
@@ -262,6 +271,12 @@ def main(argv=None):
                 if args.cache:
                     rec.run(phase, [sys.executable, str(ROOT / 'ci/reuse.py'), str(output),
                                    str(work / 'reuse'), target['id'], str(args.cache)], env, args.stage_timeout)
+                    record = work / 'reuse/reuse.json'
+                    if record.exists() and json.loads(record.read_text()).get('whole_sdk'):
+                        rec.run('restore-sdk', prefix + ['restore-sdk'], env, args.stage_timeout)
+                        rec.run('smoke', prefix + ['smoke'], env, args.stage_timeout)
+                        rec.report['skipped_phases'] = [p for p in PHASES[PHASES.index('fetch'):] if p != 'smoke']
+                        break
             else:
                 rec.run(phase, prefix + [phase], env, args.stage_timeout)
         status = "succeeded"

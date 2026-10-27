@@ -3,6 +3,7 @@
 # Modified in the personal fork on 2026-10-27: apply the shared gem5 register and syscall fixes.
 # Modified in the personal fork on 2026-10-27: include shared patch tooling in rebuild sources.
 # Modified in the personal fork on 2026-10-27: test FP execution on Minor/O3 and ship TimeBuffer fix sources.
+# Modified in the personal fork on 2026-10-27: restore and retest exact SDK/source pairs without rebuilding.
 # Created in the personal fork on 2026-10-27: source-complete engine SDK packaging.
 """Called inside the target build environment by steps.sh."""
 import json
@@ -239,6 +240,11 @@ def main():
         validate_links(bundle)
         # Hide the original prefix so smoke tests cannot accidentally use its libraries.
         prefix.rename(work / "original-prefix-not-for-runtime")
+    elif phase == "restore-sdk":
+        from components import restore_bundle
+        record = restore_bundle(work / 'reuse', (output / 'bundle-key.txt').read_text().strip(), bundle)
+        for name in record['archives']:
+            shutil.copy2(work / 'reuse' / name, output / name)
     elif phase in ("smoke", "test-bundle"):
         if phase == "test-bundle":
             bundle = Path(sys.argv[2]).resolve()
