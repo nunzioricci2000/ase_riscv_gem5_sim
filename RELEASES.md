@@ -106,7 +106,8 @@ No parallel-build aggregate RAM measurement or unmeasured speedup is claimed.
 Failed phases include the last 4 KiB of their diagnostic log in both reports.
 Component cache hits/misses and transfer times are recorded separately from
 GitHub's outer cache restore. The Windows validation can also be rerun against
-an existing Ubuntu artifact via **Validate existing package on WSL**.
+an existing Ubuntu artifact by setting `wsl_run_id` in the build workflow;
+this mode skips compilation and only validates that run's Ubuntu SDK.
 
 Local Linux invocation (requires Docker; performs real downloads/builds):
 

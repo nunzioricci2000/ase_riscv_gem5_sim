@@ -25,16 +25,21 @@ on:
         type: choice
         options: [default, bfd, gold, lld, mold]
         default: default
+      wsl_run_id:
+        description: Optional existing build run to validate on WSL only (no compilation)
+        default: ''
   push:
     branches: [main, 'release/**', 'hotfix/**']
     tags: ['v*']
 permissions:
   contents: read
+  actions: read
 concurrency:
-  group: engine-${{ github.ref }}
+  group: engine-${{ github.ref }}-${{ inputs.wsl_run_id || 'build' }}
   cancel-in-progress: false
 jobs:
   plan:
+    if: inputs.wsl_run_id == ''
     runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
@@ -125,7 +130,7 @@ jobs:
             cat "$RUNNER_TEMP/ase-output/report.md" >> "$GITHUB_STEP_SUMMARY"
           fi
   windows-wsl:
-    if: always() && needs.plan.result == 'success' && contains(needs.plan.outputs.matrix, 'ubuntu-24.04-x86_64')
+    if: always() && (inputs.wsl_run_id != '' || (needs.plan.result == 'success' && contains(needs.plan.outputs.matrix, 'ubuntu-24.04-x86_64')))
     needs: [plan, build]
     runs-on: windows-2025
     timeout-minutes: 45
@@ -137,6 +142,8 @@ jobs:
         with:
           name: engine-ubuntu-24.04-x86_64
           path: artifact
+          run-id: ${{ inputs.wsl_run_id || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Validate the Linux package under Windows WSL2
         shell: pwsh
         run: ./ci/wsl-test.ps1
