@@ -147,6 +147,12 @@ gem5-build)
     if python3 "$ASE_REPO/ci/components.py" restore gem5; then exit 0; fi
     export PYTHON_CONFIG="$prefix/python/bin/python3.10-config"
     export PYTHONPATH="$ASE_WORK/scons"
+    # Modified in the personal fork on 2026-10-27: supply the library search path
+    # omitted by CPython 3.10's macOS python-config (upstream issue 44182).
+    # SCons already forwards LIBRARY_PATH to its compiler/linker subprocesses.
+    export LIBRARY_PATH="$prefix/python/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+    "$PYTHON_CONFIG" --embed --ldflags --includes
+    ls -l "$prefix/python/lib"/libpython*
     # A nonempty array also works with nounset in macOS's system Bash 3.2.
     options=(build/RISCV/gem5.opt -j "$BUILD_JOBS")
     [[ "$GEM5_LINKER" == default ]] || options+=("--linker=$GEM5_LINKER")
