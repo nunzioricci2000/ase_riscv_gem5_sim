@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: verified reuse of completed build components.
+# Modified in the personal fork on 2026-10-27: include the TimeBuffer runtime patch in gem5 identity.
 """Cache components independently; SCons separately caches intermediate gem5 objects."""
 import hashlib
 import copy
@@ -42,7 +43,7 @@ def identity(component, repo, output, env):
         inputs.update(python=identity('python', repo, output, env), scons=lock['scons_sha256'],
                       linker=env['GEM5_LINKER'],
                       patches={name: digest(repo / name) for name in
-                               ('utils/patch_gem5.py', 'utils/gem5-runtime.patch')},
+                               ('utils/patch_gem5.py', 'utils/gem5-runtime.patch', 'utils/gem5-timebuffer.patch')},
                       patch_recipe=(repo / 'ci/package.py').read_text().split(
                           'elif phase == "patch-gem5":')[1].split('elif phase == "stage":')[0])
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()

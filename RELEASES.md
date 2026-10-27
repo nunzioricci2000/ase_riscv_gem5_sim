@@ -4,6 +4,7 @@
 <!-- Modified in the personal fork on 2026-10-27: document automatic builds on main pushes. -->
 <!-- Modified in the personal fork on 2026-10-27: add direct artifact download instructions. -->
 <!-- Modified in the personal fork on 2026-10-27: default component reuse and document diagnostics. -->
+<!-- Modified in the personal fork on 2026-10-27: document runtime coverage and incremental build counters. -->
 # Engine packages and Gitflow
 
 The build workflow produces **experimental engine SDKs**, not a cross-platform
@@ -55,6 +56,12 @@ after verifying its archive checksum. Changed gem5 inputs fall back to SCons's
 dependency/object cache. Completed components are saved even if a later build
 stage fails. Cache eviction or a missing cache causes a normal source build.
 Every package still undergoes the relocated compile/simulation smoke tests.
+These compile/link RV32 and RV64 C programs and execute integer and floating-point
+assembly. MinorCPU and O3 are tested with direct and cached memory, including
+dependent FP operations, a store of 3.5 and final double-precision writeback of
+4.5 before exit. A short C++ regression also checks optimized TimeBuffer
+initialization before compiling gem5; it detects a startup crash exposed by
+newer optimizing compilers. Passing these checks is not exhaustive ISA validation.
 Small `engine-index-TARGET` artifacts index successful SDKs for 14 days. When
 an Actions cache has been evicted, the workflow can download a matching SDK,
 verify its checksum and reuse only components with identical inputs. Lookup
@@ -104,14 +111,19 @@ gh run download RUN_ID --repo nunzioricci2000/ase_riscv_gem5_sim \
 `build-report` includes UTC start/end timestamps and monotonic wall durations
 for image pull, dependencies, source fetch, Python configure/build, toolchain
 configure/build, gem5 build, staging, relocation/simulation, source archiving
-and binary archiving. `actions-jobs.json` adds job/step timestamps for runner
+and binary archiving. The large toolchain source download has its own
+`fetch-toolchain` phase after gem5 builds, so early gem5 failures avoid that cost.
+`actions-jobs.json` adds job/step timestamps for runner
 setup, checkout, cache and artifact upload. It is a snapshot taken during the
 report job, so the report job's own final upload/end and a subsequent release
 job are not yet present. Missing or cancelled targets appear explicitly.
 No parallel-build aggregate RAM measurement or unmeasured speedup is claimed.
 Failed phases include the last 4 KiB of their diagnostic log in both reports.
 Component cache hits/misses and transfer times are recorded separately from
-GitHub's outer cache restore. The Windows validation can also be rerun against
+GitHub's outer cache restore. `gem5_work` counts actual compile/link actions and
+cached outputs retrieved from the SCons build log, excluding configure probes.
+These are different units, so they are not presented as a cache-hit percentage.
+The Windows validation can also be rerun against
 an existing Ubuntu artifact by setting `wsl_run_id` in the build workflow;
 this mode skips compilation and only validates that run's Ubuntu SDK.
 

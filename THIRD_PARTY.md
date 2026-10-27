@@ -4,6 +4,7 @@
 <!-- Created in the personal fork on 2026-10-27: record licensing boundaries. -->
 <!-- Modified in the personal fork on 2026-10-27: document pinned engine build components. -->
 <!-- Modified in the personal fork on 2026-10-27: document embedded Python build environment patch. -->
+<!-- Modified in the personal fork on 2026-10-27: document TimeBuffer initialization fix. -->
 
 - **ASE Studio** is a separate GPL-2.0-only repository at `ase_studio/`.
   Include its LICENSE and THIRD_PARTY.md and its exact pinned source revision.
@@ -32,6 +33,10 @@ See DISTRIBUTION.md before preparing a release.
   `utils/gem5-runtime.patch` fixes MinorCPU entry register state and syscall
   draining; it retains the target files’ BSD-style terms. Full ARM notices
   are reproduced in `utils/gem5-runtime.patch.license` and in the patched sources.
+  `utils/gem5-timebuffer.patch` explicitly initializes TimeBuffer slots so
+  optimizing compilers cannot discard their intended zero initialization.
+  It preserves the Michigan BSD-style notice, also reproduced in the adjacent
+  `.license` file. Both patches are supplied with the corresponding sources.
 - RISC-V toolchain `33eb59addcd65b8fd71f69fb42ccd2ea31bcbaf1`: the wrapper's
   LICENSE is not a substitute for its submodules' licenses. GCC
   `6afcc4f6da931eb93f3ab001a0dd9650ea71d1ea` and binutils

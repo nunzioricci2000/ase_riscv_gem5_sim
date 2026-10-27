@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Modified in the personal fork on 2026-10-27: apply the shared gem5 register and syscall fixes.
 # Modified in the personal fork on 2026-10-27: include shared patch tooling in rebuild sources.
+# Modified in the personal fork on 2026-10-27: test FP execution on Minor/O3 and ship TimeBuffer fix sources.
 # Created in the personal fork on 2026-10-27: source-complete engine SDK packaging.
 """Called inside the target build environment by steps.sh."""
 import json
@@ -101,6 +102,34 @@ def smoke(bundle, output):
         raise RuntimeError("Simulation exited before the final division wrote back 63 / 9 = 7")
     if "exiting with last active thread context" not in (output / "simulation.log").read_text():
         raise RuntimeError("Smoke program did not exit normally (possibly hit the tick limit)")
+    fp_elf = output / "smoke-fp.elf"
+    run(gcc, "-march=rv32imafd_zicsr_zifencei", "-mabi=ilp32", "-nostdlib",
+        bundle / "tests/smoke-fp.s", "-o", fp_elf, env=env)
+    checked = ["rv32imac-ilp32-link", "rv64gc-lp64d-link", "minor-final-integer-writeback"]
+    for cpu, script in (("minor", "riscv_in_order_hen_patt.py"), ("o3", "riscv_o3_custom.py")):
+        for memory in ("direct", "cache"):
+            name = f"{cpu}-{memory}-fp"
+            trace = output / f"{name}.trace"
+            log_path = output / f"{name}.log"
+            outdir = output / f"{name}-m5out"
+            options = (["--cpu-type=MinorCPU", "--caches"] if cpu == "minor"
+                       else ["--directory", outdir])
+            with log_path.open("w") as log:
+                run(simulator, "--debug-flags=MinorGUI,Exec", f"--debug-file={trace}",
+                    f"--outdir={outdir}", bundle / "configs" / script,
+                    "--cmd", fp_elf, "--abs-max-tick=100000000", f"--ase-memory-mode={memory}",
+                    *options, env=env, cwd=output, timeout=120, stdout=log, stderr=subprocess.STDOUT)
+            text = trace.read_text()
+            if not re.search(r"fsw\s+f3,\s*24\(x5\).*\bD=0x0*40600000\b", text):
+                raise RuntimeError(f"{name}: dependent FP operations did not store 3.5")
+            if not re.search(r"fdiv_d\s+f6,\s*f4,\s*f5.*\bD=0x4012000000000000\b", text):
+                raise RuntimeError(f"{name}: final FP division did not write back 4.5")
+            if "exiting with last active thread context" not in log_path.read_text():
+                raise RuntimeError(f"{name}: simulation did not exit normally")
+            if cpu == "minor" and "ASE_INITIAL_REGISTERS_BEGIN thread=0" not in text:
+                raise RuntimeError(f"{name}: initial register snapshot missing")
+            checked.append(name)
+    (output / "verified-runtime.json").write_text(json.dumps(checked, indent=2) + "\n")
 
 
 def main():
@@ -170,6 +199,7 @@ def main():
         (bundle / "bin/gem5").chmod(0o755)
         (bundle / "tests").mkdir()
         shutil.copy2(repo / "ci/smoke.s", bundle / "tests/smoke.s")
+        shutil.copy2(repo / "ci/smoke-fp.s", bundle / "tests/smoke-fp.s")
         shutil.copy2(repo / "ci/package.py", bundle / "tests/package.py")
         for name in ("LICENSE", "THIRD_PARTY.md", "DISTRIBUTION.md"):
             shutil.copy2(repo / name, bundle / name)
@@ -184,6 +214,10 @@ def main():
                         dest = bundle / "licenses" / component / relative
                         dest.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(src, dest)
+        for name in ("gem5-runtime.patch.license", "gem5-timebuffer.patch.license"):
+            destination = bundle / "licenses/gem5" / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(repo / "utils" / name, destination)
         manifest = dict(target=target, sources=json.loads((repo / "ci/sources.lock.json").read_text()),
                         profile=os.environ["ASE_PROFILE"], jobs=int(os.environ["BUILD_JOBS"]),
                         linker=os.environ["GEM5_LINKER"], gui_included=False,
@@ -221,7 +255,8 @@ def main():
                   (repo / ".github/workflows", "project/.github/workflows")]
         extras += [(repo / name, f"project/{name}") for name in ("LICENSE", "THIRD_PARTY.md", "DISTRIBUTION.md", "RELEASES.md")]
         extras += [(repo / 'utils' / name, f'project/utils/{name}') for name in
-                   ('patch_gem5.py', 'gem5-runtime.patch', 'gem5-runtime.patch.license')]
+                   ('patch_gem5.py', 'gem5-runtime.patch', 'gem5-runtime.patch.license',
+                    'gem5-timebuffer.patch', 'gem5-timebuffer.patch.license')]
         extras += [(p, f"build-tools/{p.name}") for p in (sources / "build-tools").iterdir()]
         source_archive(output / f"ase-engine-{target}-sources.tar.gz",
                        {name: sources / name for name in ("gem5", "python", "toolchain")}, extras)

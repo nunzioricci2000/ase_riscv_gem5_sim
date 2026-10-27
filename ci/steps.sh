@@ -83,10 +83,7 @@ environment)
     ;;
 fetch)
     checkout python
-    checkout toolchain
     checkout gem5
-    # Only these projects are used by the newlib build; never fetch QEMU/LLVM/glibc.
-    git -C "$sources/toolchain" submodule update --init --depth 1 gcc binutils newlib gdb
     python3 "$ASE_REPO/ci/package.py" patch-gem5
     # Fetch the pinned source directly: distro pip versions can misread its metadata.
     mkdir -p "$sources/build-tools"
@@ -102,6 +99,12 @@ if hashlib.sha256(source.read_bytes()).hexdigest() != lock['scons_sha256']:
 PY
     mkdir "$ASE_WORK/scons"
     tar -xf "$sources"/build-tools/scons-*.tar.gz --strip-components=1 -C "$ASE_WORK/scons"
+    ;;
+fetch-toolchain)
+    # Modified in the personal fork on 2026-10-27: avoid large downloads when gem5 fails early.
+    checkout toolchain
+    # Only these projects are used by the newlib build; never fetch QEMU/LLVM/glibc.
+    git -C "$sources/toolchain" submodule update --init --depth 1 gcc binutils newlib gdb
     ;;
 python-configure)
     if python3 "$ASE_REPO/ci/components.py" restore python; then
@@ -145,12 +148,20 @@ toolchain-build)
     ;;
 gem5-build)
     if python3 "$ASE_REPO/ci/components.py" restore gem5; then exit 0; fi
+    # Modified in the personal fork on 2026-10-27: reject uninitialized O3 buffers before the full build.
+    "${CXX:-c++}" -std=c++17 -O3 -I"$sources/gem5/src" "$ASE_REPO/ci/timebuffer-regression.cc" \
+        -o "$ASE_WORK/timebuffer-regression"
+    "$ASE_WORK/timebuffer-regression"
     export PYTHON_CONFIG="$prefix/python/bin/python3.10-config"
     export PYTHONPATH="$ASE_WORK/scons"
     # Modified in the personal fork on 2026-10-27: supply the library search path
     # omitted by CPython 3.10's macOS python-config (upstream issue 44182).
     # SCons already forwards LIBRARY_PATH to its compiler/linker subprocesses.
     export LIBRARY_PATH="$prefix/python/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+    if [[ "$ASE_FAMILY" == macos ]]; then
+        # CPython's link flags also reference Homebrew libraries such as libintl.
+        export LIBRARY_PATH="$LIBRARY_PATH:$brew_root/lib"
+    fi
     "$PYTHON_CONFIG" --embed --ldflags --includes
     ls -l "$prefix/python/lib"/libpython*
     # A nonempty array also works with nounset in macOS's system Bash 3.2.

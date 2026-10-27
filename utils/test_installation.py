@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # Modified in the personal fork on 2026-10-27: account for idempotent gem5 patch application in installer doubles.
+# Modified in the personal fork on 2026-10-27: require both runtime patches on every installer retry.
 """Offline installer regressions. All builds/package operations use test doubles."""
 import json
 import os
@@ -193,7 +194,8 @@ echo "$BUILD_JOBS"''', BUILD_JOBS='')
                 self.run_bash(script, ROOT_DIR=root, GEM5_LINKER='lld',
                               GEM5_BUILD_CACHE=str(self.base/'object cache'))
         self.assertEqual(len([call for call in self.calls('git') if call[0] == 'clone']), 3)
-        self.assertEqual(len([call for call in self.calls('git') if call[0] == 'apply']), 6)
+        patches = [Path(call[-1]).name for call in self.calls('git') if call[0] == 'apply']
+        self.assertCountEqual(patches, ['gem5-runtime.patch', 'gem5-timebuffer.patch'] * 6)
         self.assertEqual(len(self.calls('virtualenv')), 3)
         python_calls = self.calls('python')
         self.assertEqual(len([x for x in python_calls if x[:2] == ['-m', 'pip']]), 3)

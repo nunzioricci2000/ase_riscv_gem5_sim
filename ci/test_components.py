@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: check cache invalidation, corruption and safe restoration.
+# Modified in the personal fork on 2026-10-27: cover both independent gem5 runtime patches.
 import importlib.util
 import io
 import json
@@ -82,7 +83,7 @@ class ComponentTests(unittest.TestCase):
             output.mkdir()
             shutil.copytree(ROOT / 'ci', repo / 'ci')
             (repo / 'utils').mkdir()
-            for name in ('patch_gem5.py', 'gem5-runtime.patch'):
+            for name in ('patch_gem5.py', 'gem5-runtime.patch', 'gem5-timebuffer.patch'):
                 shutil.copy2(ROOT / 'utils' / name, repo / 'utils' / name)
             (output / 'packages.txt').write_text('compiler 1.0')
             (output / 'environment.json').write_text(json.dumps({'compiler': 'gcc 1.0'}))

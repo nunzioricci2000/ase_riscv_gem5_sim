@@ -3,6 +3,7 @@
 # Created in the personal fork on 2026-10-27: failure accounting and packaging regressions.
 # Modified in the personal fork on 2026-10-27: check unprefixed personal branch routes.
 # Modified in the personal fork on 2026-10-27: ignore lookup indexes when verifying distributable artifacts.
+# Modified in the personal fork on 2026-10-27: reject misleading compilation counts from configure probes.
 import importlib.util
 import hashlib
 import json
@@ -28,6 +29,19 @@ build, package, aggregate, gitflow = [module(name) for name in ("build", "packag
 
 
 class PipelineTests(unittest.TestCase):
+    def test_gem5_work_counts_actions_without_configure_probes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / 'gem5.log'
+            log.write_text(" [ CXX] configure probe\nscons: Building targets ...\n"
+                           "Retrieved `build/RISCV/one.o' from cache\n"
+                           " [ CXX] changed.cc -> changed.o\n [ CC] helper.c -> helper.o\n"
+                           " [ LINK] -> gem5.opt\nscons: done building targets.\n [ CXX] diagnostic tail\n")
+            self.assertEqual(build.gem5_work(log), dict(build_started=True, compile_actions=2,
+                                                       link_actions=1, cache_retrievals=1))
+            log.write_text('gem5 component restored from cache\n')
+            self.assertEqual(build.gem5_work(log), dict(build_started=False, compile_actions=0,
+                                                       link_actions=0, cache_retrievals=0))
+
     def test_target_selection_is_closed_and_preserves_architecture(self):
         rows = build.targets("all")
         self.assertEqual(len({r["id"] for r in rows}), len(rows))

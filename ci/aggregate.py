@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: aggregate complete and missing build reports.
 # Modified in the personal fork on 2026-10-27: surface failure diagnostics and component cache outcomes.
+# Modified in the personal fork on 2026-10-27: distinguish compilation work from cached outputs.
 import argparse
 from datetime import datetime, timezone
 import hashlib
@@ -79,6 +80,10 @@ def markdown(report):
                           (stage.get('diagnostic') or stage['error']).replace('```', "'''"), '```']
         for event in row.get('component_cache', []):
             lines += [f"- Cache {event['component']}: {event['action']} {event['status']} ({event['seconds']:.2f}s)"]
+        if row.get('gem5_work', {}).get('build_started'):
+            work = row['gem5_work']
+            lines += ['', f"gem5: {work['compile_actions']} compile actions, "
+                      f"{work['link_actions']} link actions, {work['cache_retrievals']} cached outputs retrieved."]
         for artifact in row.get("artifacts", []):
             lines += ["", f"`{artifact['name']}`: {artifact['bytes']} bytes; SHA256 `{artifact['sha256']}`"]
     lines += ["", "## Interpretation", ""] + [f"- {note}" for note in report["notes"]]

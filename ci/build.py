@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: measured multi-platform builds.
 # Modified in the personal fork on 2026-10-27: expose failures and component reuse; compile gem5 first.
+# Modified in the personal fork on 2026-10-27: report actual gem5 compilation, linking and object cache retrievals.
+# Modified in the personal fork on 2026-10-27: delay large toolchain downloads until gem5 has built.
 """Build the engine SDK, preserving failure reports; never publish from this script."""
 import argparse
 from datetime import datetime, timezone
@@ -10,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import signal
 import subprocess
 import sys
@@ -17,7 +20,7 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 PHASES = ("dependencies", "environment", "reuse", "fetch", "python-configure", "python-build",
-          "gem5-build", "toolchain-configure", "toolchain-build", "stage", "smoke",
+          "gem5-build", "fetch-toolchain", "toolchain-configure", "toolchain-build", "stage", "smoke",
           "sources", "archive")
 
 
@@ -50,6 +53,28 @@ def targets(selection):
     if not requested or len(set(requested)) != len(requested) or set(requested) - known:
         raise ValueError("Unknown or duplicated target; use all, linux, or comma-separated target IDs")
     return [row for row in rows if row["id"] in requested]
+
+
+def gem5_work(log):
+    """Count emitted SCons actions; configure probes are deliberately excluded."""
+    result = dict(build_started=False, compile_actions=0, link_actions=0, cache_retrievals=0)
+    active = False
+    with log.open(errors="replace") as stream:
+        for line in stream:
+            if line.startswith("scons: Building targets"):
+                active = result["build_started"] = True
+                continue
+            if line.startswith(("scons: done building", "scons: building terminated")):
+                active = False
+            if not active:
+                continue
+            if line.startswith("Retrieved ") and " from cache" in line:
+                result["cache_retrievals"] += 1
+            action = re.match(r"\s*\[\s*(CC|CXX|AS|LINK|SHLINK)\s*\]", line)
+            if action:
+                key = "link_actions" if action[1] in ("LINK", "SHLINK") else "compile_actions"
+                result[key] += 1
+    return result
 
 
 class Recorder:
@@ -120,6 +145,10 @@ class Recorder:
         self.report['component_cache'] = [json.loads(line) for line in cache_events.read_text().splitlines()] if cache_events.exists() else []
         keys = self.output / 'component-keys.json'
         self.report['component_keys'] = json.loads(keys.read_text()) if keys.exists() else {}
+        for stage in self.report['stages']:
+            log = self.output / stage['log']
+            if stage['name'] == 'gem5-build' and log.exists():
+                self.report['gem5_work'] = gem5_work(log)
         if error:
             self.report["error"] = str(error)
         self.report["artifacts"] = [dict(name=p.name, bytes=p.stat().st_size, sha256=digest(p))
@@ -141,6 +170,10 @@ class Recorder:
             lines += ['', 'Component reuse:'] + [
                 f"- {e['component']}: {e['action']} {e['status']} ({e['seconds']:.2f}s)"
                 for e in self.report['component_cache']]
+        if self.report.get('gem5_work', {}).get('build_started'):
+            work = self.report['gem5_work']
+            lines += ['', f"gem5: {work['compile_actions']} compile actions, "
+                      f"{work['link_actions']} link actions, {work['cache_retrievals']} cached outputs retrieved."]
         (self.output / "report.md").write_text("\n".join(lines) + "\n")
         (self.output / "SHA256SUMS").write_text("".join(
             f"{item['sha256']}  {item['name']}\n" for item in self.report["artifacts"]))
