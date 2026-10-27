@@ -1,0 +1,105 @@
+diff --git i/src/cpu/minor/cpu.cc w/src/cpu/minor/cpu.cc
+index 4a656898e1..3c167cc598 100644
+--- i/src/cpu/minor/cpu.cc
++++ w/src/cpu/minor/cpu.cc
+@@ -35,7 +35,9 @@
+  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  */
+ 
++// Modified in the personal fork on 2026-10-27: initialize forwarded registers and trace the entry state.
+ #include "cpu/minor/cpu.hh"
++#include "debug/MinorGUI.hh"
+ #include "cpu/minor/pipeline.hh"
+ #include "debug/Drain.hh"
+ #include "debug/MinorCPU.hh"
+@@ -107,6 +109,11 @@ namespace gem5
+         return pipeline->getScoreboard();
+     }
+ 
++    bool MinorCPU::memoryAndWritebackDrained()
++    {
++        return pipeline->memoryAndWritebackDrained();
++    }
++
+     bool MinorCPU::decodeWasStalling() const {
+         return pipeline->decodeWasStalling();
+     }
+@@ -188,8 +195,22 @@ namespace gem5
+ 
+         BaseCPU::startup();
+ 
+-        for (ThreadID tid = 0; tid < numThreads; tid++)
++        for (ThreadID tid = 0; tid < numThreads; tid++) {
++            // Process initialization populates the architectural register file
++            // (including sp), but execution reads the separate forwarded file.
++            auto *thread = threads[tid];
++            for (const auto *reg_class : thread->getIsaPtr()->regClasses()) {
++                if (reg_class->type() != IntRegClass &&
++                    reg_class->type() != FloatRegClass)
++                    continue;
++                for (const auto &reg : *reg_class)
++                    thread->setFwdReg(reg, thread->getReg(reg));
++            }
++            DPRINTF(MinorGUI, "ASE_INITIAL_REGISTERS_BEGIN thread=%d\n", tid);
++            thread->dumpFwdRegisters();
++            DPRINTF(MinorGUI, "ASE_INITIAL_REGISTERS_END thread=%d\n", tid);
+             pipeline->wakeupFetch(tid);
++        }
+     }
+ 
+     DrainState
+diff --git i/src/cpu/minor/cpu.hh w/src/cpu/minor/cpu.hh
+index 124f74338a..f21ead5991 100644
+--- i/src/cpu/minor/cpu.hh
++++ w/src/cpu/minor/cpu.hh
+@@ -145,6 +145,8 @@ namespace gem5
+     gem5::Addr getDecodeLastInstPC() const;
+     bool decodeIsWaitingFetchAfterBranch() const;
+     bool isMemoryExecuting(ThreadID tid) const;
++    // Modified in the personal fork on 2026-10-27: serialize syscalls after older work.
++    bool memoryAndWritebackDrained();
+     /** Processor-specific statistics */
+     minor::MinorStats stats;
+ 
+diff --git i/src/cpu/minor/execute.cc w/src/cpu/minor/execute.cc
+index fc98e02dc5..22ead02aed 100644
+--- i/src/cpu/minor/execute.cc
++++ w/src/cpu/minor/execute.cc
+@@ -734,6 +734,19 @@ namespace gem5
+             }
+             else
+             {
++                // Modified in the personal fork on 2026-10-27: do not let exit
++                // or another syscall overtake older long-latency instructions.
++                if (inst->isInst() && inst->staticInst->isSyscall() &&
++                    (!thread.inFlightInsts->empty() ||
++                     !cpu.memoryAndWritebackDrained())) {
++                    cpu.activityRecorder->activity();
++                    return false;
++                }
++                for (const auto &pending : thread.inFlightInsts->getQueue()) {
++                    if (pending.inst->isInst() && pending.inst->staticInst->isSyscall())
++                        return false;
++                }
++
+                 /* Try and issue an instruction into an FU, assume we didn't and
+                  * fix that in the loop.
+                  * Try FU from 0 each instruction.
+diff --git i/src/cpu/minor/pipeline.hh w/src/cpu/minor/pipeline.hh
+index 4cc2dfbbef..97e8020cf2 100644
+--- i/src/cpu/minor/pipeline.hh
++++ w/src/cpu/minor/pipeline.hh
+@@ -167,6 +167,13 @@ namespace gem5
+       bool instIsRightStream(MinorDynInstPtr inst) { return execute.instIsRightStream(inst); }
+       bool instIsHeadInst(MinorDynInstPtr inst) { return execute.instIsHeadInst(inst); }
+ 
++      // Modified in the personal fork on 2026-10-27: include stage latches in syscall serialization.
++      bool memoryAndWritebackDrained()
++      {
++        return eToM.empty() && mToW.empty() &&
++            memory.isDrained() && writeback.isDrained();
++      }
++
+       LSQ &getLSQ() { return lsq; }
+       bool isMemoryExecuting(ThreadID tid) const
+       {

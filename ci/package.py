@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
+# Modified in the personal fork on 2026-10-27: apply the shared gem5 register and syscall fixes.
 # Created in the personal fork on 2026-10-27: source-complete engine SDK packaging.
 """Called inside the target build environment by steps.sh."""
 import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -91,6 +93,11 @@ def smoke(bundle, output):
             stdout=log, stderr=subprocess.STDOUT)
     if not trace.is_file() or not trace.stat().st_size:
         raise RuntimeError("Simulation did not produce a pipeline trace")
+    trace_text = trace.read_text()
+    if "ASE_INITIAL_REGISTERS_BEGIN thread=0" not in trace_text:
+        raise RuntimeError("Simulation did not record the initial register state")
+    if not re.search(r"div\s+x7,\s*x5,\s*x6\s+:.*\bD=0x0*7\b", trace_text):
+        raise RuntimeError("Simulation exited before the final division wrote back 63 / 9 = 7")
     if "exiting with last active thread context" not in (output / "simulation.log").read_text():
         raise RuntimeError("Smoke program did not exit normally (possibly hit the tick limit)")
 
@@ -129,6 +136,7 @@ def main():
             raise RuntimeError("At least 20 GiB free space is needed for the full source/build/package experiment")
         (output / "environment.json").write_text(json.dumps(data, indent=2) + "\n")
     elif phase == "patch-gem5":
+        run(sys.executable, repo / "utils/patch_gem5.py", sources / "gem5")
         path = sources / "gem5/src/proto/SConsopts"
         content = path.read_text()
         old = "conf.CheckPkgConfig('protobuf', '--cflags', '--libs-only-L')"

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Modified in the personal fork on 2026-10-27: apply register/playback runtime fixes before incremental builds.
 # Shared build policy for the Ubuntu, Fedora and Arch installers.
 
 install_error() { echo "Installation: $*" >&2; return 1; }
@@ -207,6 +208,7 @@ build_gem5() (
         install_error "Incomplete gem5 checkout at ${source_dir}; inspect it before retrying."
         exit 1
     }
+    python3 "${UTILS_DIR}/patch_gem5.py" "${source_dir}"
     cd "${source_dir}"
     if [[ ! -x "${venv}/bin/python" ]]; then
         if command -v virtualenv >/dev/null 2>&1; then

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Modified in the personal fork on 2026-10-27: account for idempotent gem5 patch application in installer doubles.
 """Offline installer regressions. All builds/package operations use test doubles."""
 import json
 import os
@@ -23,6 +24,8 @@ root = p(os.environ['ROOT_DIR'])
 with open(os.environ['TEST_LOG'], 'a') as log:
     log.write(json.dumps([name, args]) + '\n')
 if name == 'git':
+    if args[0] == 'apply':
+        sys.exit(0)  # Patch semantics are tested separately; this double checks installer orchestration.
     assert args[0] == 'clone', args
     dest = p(args[-1]); dest.mkdir(parents=True)
     if 'riscv-gnu-toolchain' in args[-2]:
@@ -189,7 +192,8 @@ echo "$BUILD_JOBS"''', BUILD_JOBS='')
                 self.run_bash(script, success=False, ROOT_DIR=root, FAIL_BUILD='1')
                 self.run_bash(script, ROOT_DIR=root, GEM5_LINKER='lld',
                               GEM5_BUILD_CACHE=str(self.base/'object cache'))
-        self.assertEqual(len(self.calls('git')), 3)
+        self.assertEqual(len([call for call in self.calls('git') if call[0] == 'clone']), 3)
+        self.assertEqual(len([call for call in self.calls('git') if call[0] == 'apply']), 6)
         self.assertEqual(len(self.calls('virtualenv')), 3)
         python_calls = self.calls('python')
         self.assertEqual(len([x for x in python_calls if x[:2] == ['-m', 'pip']]), 3)

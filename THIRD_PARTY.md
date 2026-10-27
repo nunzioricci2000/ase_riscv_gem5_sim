@@ -26,6 +26,9 @@ See DISTRIBUTION.md before preparing a release.
 - gem5 `6169bf94dc3f24b05303d2b4dbfbe765c0a04ac0`: its BSD-style LICENSE and
   per-file/third-party notices remain in force. The protobuf link-flags patch
   preserves its upstream notice and is included in the source snapshot.
+  `utils/gem5-runtime.patch` fixes MinorCPU entry register state and syscall
+  draining; it retains the target files’ BSD-style terms. Full ARM notices
+  are reproduced in `utils/gem5-runtime.patch.license` and in the patched sources.
 - RISC-V toolchain `33eb59addcd65b8fd71f69fb42ccd2ea31bcbaf1`: the wrapper's
   LICENSE is not a substitute for its submodules' licenses. GCC
   `6afcc4f6da931eb93f3ab001a0dd9650ea71d1ea` and binutils
