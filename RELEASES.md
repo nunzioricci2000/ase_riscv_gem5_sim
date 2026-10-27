@@ -2,6 +2,7 @@
 <!-- Created in the personal fork on 2026-10-27: measured binary distribution and Gitflow. -->
 <!-- Modified in the personal fork on 2026-10-27: use main/develop and original/ branch names. -->
 <!-- Modified in the personal fork on 2026-10-27: document automatic builds on main pushes. -->
+<!-- Modified in the personal fork on 2026-10-27: add direct artifact download instructions. -->
 # Engine packages and Gitflow
 
 The build workflow produces **experimental engine SDKs**, not a cross-platform
@@ -71,6 +72,17 @@ submodules and local gem5 patch), SHA256SUMS, stage logs and JSON/Markdown
 reports. Failed builds retain diagnostics; incomplete archives use `.partial`
 and are not release assets. Artifacts expire after 14 days; the combined report
 is retained for 90 days. GitHub artifact downloads normally require login.
+
+Open [the fork's package builds](https://github.com/nunzioricci2000/ase_riscv_gem5_sim/actions/workflows/build-release.yml),
+select a run on `main`, then select `engine-TARGET` in **Artifacts** at the bottom
+of the run page. Choose the host OS and architecture, extract the downloaded ZIP,
+then extract its binary `.tar.gz`. A failed target may contain only diagnostics.
+With GitHub CLI, replace `RUN_ID` with the number in that run's URL:
+
+```sh
+gh run download RUN_ID --repo nunzioricci2000/ase_riscv_gem5_sim \
+  --name engine-ubuntu-24.04-x86_64 --dir downloaded-engine
+```
 
 `build-report` includes UTC start/end timestamps and monotonic wall durations
 for image pull, dependencies, source fetch, Python configure/build, toolchain
