@@ -1,0 +1,145 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+<!-- Created in the personal fork on 2026-10-27: measured binary distribution and Gitflow. -->
+<!-- Modified in the personal fork on 2026-10-27: use main/develop and original/ branch names. -->
+<!-- Modified in the personal fork on 2026-10-27: document automatic builds on main pushes. -->
+# Engine packages and Gitflow
+
+The build workflow produces **experimental engine SDKs**, not a cross-platform
+ASE Studio desktop application. Each SDK contains this fork's RISCV `gem5.opt`,
+the GNU bare-metal RV32/RV64 toolchain, Python 3.10, simulation configurations,
+launch wrapper, smoke test, manifests and notices. GTK/WebKit and the Studio
+frontend are not bundled. Set Studio's gem5 path to `SDK/bin/gem5` and its
+toolchain path to `SDK/toolchain/bin` on a supported Studio host.
+
+## Platforms
+
+`ci/targets.json` is the explicit, extensible target inventory. It currently
+builds Ubuntu 22.04/24.04 x86-64, Ubuntu 24.04 ARM64, Debian 12/13 x86-64,
+Fedora 43 x86-64, Arch x86-64, and experimental macOS 15 Intel/Apple Silicon.
+Linux builds use native-architecture containers, not CPU emulation. macOS uses
+a case-sensitive APFS workspace because the toolchain sources require it.
+The OS/architecture is the **host** running gem5/GCC; the compiled programs
+target **RISC-V RV32/RV64** on every host.
+
+Windows uses the Ubuntu 24.04 x86-64 SDK under **WSL2**. A Windows 2025 job
+installs a WSL2 Ubuntu distribution and runs the SDK's compile/simulation test.
+That job can fail if the runner cannot provision WSL2; the failure is retained,
+not disguised as native Windows support. There is no `.exe` target. A WSL2
+validation is added whenever Ubuntu 24.04 x86-64 is selected.
+
+System shared libraries remain external. `packages.txt`, `environment.json`
+and `runtime-links.txt` identify the build/runtime environment. These are
+distribution-specific packages, **not universal static binaries**. WSL validation
+installs the build image's package names conservatively; it does not yet measure
+a minimal runtime installation. macOS depends on Homebrew libraries in the
+matching architecture/prefix. Compilers and mutable package/image versions can
+break an older gem5 fork; the first remote run is a compatibility experiment.
+No target is certified before its actual build and smoke test succeed.
+
+## Run and compare builds
+
+Every push to `main` automatically starts **Build engine packages** for the
+entire matrix. Download the resulting artifacts from that workflow run once
+each target completes; pushing to `main` does not publish a GitHub Release.
+For a controlled experiment, open **Actions → Build engine packages → Run workflow**.
+Choose a branch, target IDs (`all`, `linux`, or comma-separated IDs), `full` or
+`minimal` toolchain profile, compiler jobs, linker and whether to restore the
+SCons cache. The full profile is the default. Minimal omits GDB and restricts
+multilib to RV32IMAC/ILP32 and RV64GC/LP64D; both preserve the assembly/runtime
+smoke tests. Python is built without PGO/LTO. gem5 stays `opt` with pipeline
+tracing enabled; switching to `fast` would invalidate that requirement.
+
+Each matrix job has a 350-minute limit; at most three execute concurrently.
+Compilation is expensive. Normal feature/develop pushes run only offline
+checks. Main/release/hotfix pushes and version tags build the entire matrix.
+GitHub runner storage/concurrency limits still apply. Linux jobs free known
+preinstalled SDK directories on the disposable runner; macOS jobs fail with a
+clear preflight diagnostic when there is less than 20 GiB free. No local
+installation/build directory is removed by these scripts.
+
+For a baseline, disable cache, use `full` and `default` linker. Compare runs
+with identical source lock, target, package inventory and jobs; change only
+one variable. A restored cache is not proof that every object was reused.
+SCons cache directories include the package-inventory fingerprint. Reports
+record the image digest, compiler versions, recipes' hashes and cache setting;
+container tags and distro repositories remain mutable, so this is not a claim
+of byte-for-byte reproducibility.
+
+Download `engine-TARGET` from the workflow run. It contains the binary archive,
+matching **complete source snapshots** (including initialized toolchain
+submodules and local gem5 patch), SHA256SUMS, stage logs and JSON/Markdown
+reports. Failed builds retain diagnostics; incomplete archives use `.partial`
+and are not release assets. Artifacts expire after 14 days; the combined report
+is retained for 90 days. GitHub artifact downloads normally require login.
+
+`build-report` includes UTC start/end timestamps and monotonic wall durations
+for image pull, dependencies, source fetch, Python configure/build, toolchain
+configure/build, gem5 build, staging, relocation/simulation, source archiving
+and binary archiving. `actions-jobs.json` adds job/step timestamps for runner
+setup, checkout, cache and artifact upload. It is a snapshot taken during the
+report job, so the report job's own final upload/end and a subsequent release
+job are not yet present. Missing or cancelled targets appear explicitly.
+No parallel-build aggregate RAM measurement or unmeasured speedup is claimed.
+
+Local Linux invocation (requires Docker; performs real downloads/builds):
+
+```sh
+python3 ci/build.py --target ubuntu-22.04-x86_64 \
+  --work /path/to/new-work --output /path/to/new-report --jobs 2
+```
+
+Source archives include the build recipes in `sources/project/ci` and all
+editable component sources. To rebuild from snapshots, use the dependency and
+configure/build commands in `ci/steps.sh`, pointing `sources` at those extracted
+trees instead of running the `fetch` phase. Initialize local Git metadata for
+the toolchain and its populated submodules (`git init` in each) because its
+Makefile uses `.git` as a source-presence marker; no upstream source download
+is needed. Unpack the included SCons tarball into the `ASE_WORK/scons` directory.
+System build packages are still required. The source archive is not a VM image.
+
+## Gitflow for this fork
+
+The personal repository uses `main` for stable releases and `develop` for
+integration. The original repository remains the `upstream` remote, whose
+remote-tracking refs already have names such as `upstream/main`. Retained
+copies in the personal repository use `original/main` and
+`original/fix/new_env_setup`. These are snapshots, not automatically updated
+mirrors; use `git fetch upstream` to refresh upstream's remote-tracking refs.
+The original repository's branches are not renamed. The local `original/main`
+preserves the former local upstream checkout, which can lag the remote snapshot.
+
+| Branch | Purpose | Merge destination |
+| --- | --- | --- |
+| `main` | Stable releases; default branch | `develop` after release/hotfix |
+| `develop` | Integration | start a `release/VERSION` branch |
+| `feature/NAME`, `fix/NAME` | Development from `develop` | `develop` |
+| `release/VERSION` | Stabilization from `develop` | `main`, then back into `develop` |
+| `hotfix/VERSION` | Urgent fix from `main` | `main`, then back into `develop` |
+
+`python3 ci/gitflow.py init` creates `develop` if absent and configures
+local git-flow branch/prefix settings. It does not switch branches, commit,
+push or rewrite history. Push the integration branch when ready. The CI
+check rejects feature PRs directly into stable. GitHub branch protection must
+require **Gitflow and regression checks** on `main` and `develop`,
+require PRs, and prohibit force-push/deletion. Workflow YAML alone cannot
+enforce remote protection or prevent direct pushes by administrators.
+
+Release sequence:
+
+1. Merge features into `develop`; create `release/X.Y.Z` and evaluate the
+   matrix reports. Publish/merge Studio changes separately if relevant; these
+   engine packages do not include the Studio submodule.
+2. Merge release into `main`, then merge stable back into `develop`.
+3. Tag the current stable tip `vX.Y.Z` (or `vX.Y.Z-rc.N` / `-beta.N`) and push
+   the tag. A tag elsewhere is rejected before starting expensive builds.
+4. Only when every selected build and WSL validation succeeds does the workflow
+   create a **draft** GitHub Release with source/binary pairs and reports.
+   Failed macOS builds also block the automatic draft; successful target
+   artifacts remain available for evaluation. Draft creation is intentionally
+   non-overwriting: a rerun against an existing release needs explicit handling.
+5. Review [DISTRIBUTION.md](DISTRIBUTION.md), notices, source completeness and
+   test evidence, then publish the draft. Successful CI does not certify every
+   upstream asset or license. This initial workflow does not publish automatically.
+
+Offline checks: `python3 -m unittest discover -s ci -p 'test_*.py' -v`,
+`python3 utils/test_installation.py`, `python3 utils/test_benchmark_installation.py`.

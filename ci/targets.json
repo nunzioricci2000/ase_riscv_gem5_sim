@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "targets": [
+    {"id": "ubuntu-22.04-x86_64", "runner": "ubuntu-22.04", "image": "ubuntu:22.04", "family": "debian", "arch": "x86_64"},
+    {"id": "ubuntu-24.04-x86_64", "runner": "ubuntu-24.04", "image": "ubuntu:24.04", "family": "debian", "arch": "x86_64", "also_runs_on": ["Windows x86-64 with WSL2 Ubuntu 24.04 (validation pending)"]},
+    {"id": "ubuntu-24.04-aarch64", "runner": "ubuntu-24.04-arm", "image": "ubuntu:24.04", "family": "debian", "arch": "aarch64"},
+    {"id": "debian-12-x86_64", "runner": "ubuntu-24.04", "image": "debian:12", "family": "debian", "arch": "x86_64"},
+    {"id": "debian-13-x86_64", "runner": "ubuntu-24.04", "image": "debian:13", "family": "debian", "arch": "x86_64"},
+    {"id": "fedora-43-x86_64", "runner": "ubuntu-24.04", "image": "fedora:43", "family": "fedora", "arch": "x86_64"},
+    {"id": "arch-x86_64", "runner": "ubuntu-24.04", "image": "archlinux:base", "family": "arch", "arch": "x86_64"},
+    {"id": "macos-15-x86_64", "runner": "macos-15-intel", "image": null, "family": "macos", "arch": "x86_64", "experimental": true},
+    {"id": "macos-15-arm64", "runner": "macos-15", "image": null, "family": "macos", "arch": "aarch64", "experimental": true}
+  ],
+  "unsupported": [
+    {"id": "windows-native", "reason": "No native Windows port of the current gem5/GTK stack. Use the Ubuntu 24.04 x86-64 package inside WSL2; this is not a Windows .exe."}
+  ]
+}

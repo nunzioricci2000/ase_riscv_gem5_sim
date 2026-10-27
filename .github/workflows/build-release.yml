@@ -1,0 +1,203 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Created in the personal fork on 2026-10-27: measured builds and draft releases.
+# Modified in the personal fork on 2026-10-27: build packages automatically on every main push.
+name: Build engine packages
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: 'all, linux, or comma-separated IDs from ci/targets.json'
+        default: all
+        required: true
+      profile:
+        type: choice
+        options: [full, minimal]
+        default: full
+      jobs:
+        description: Compiler jobs per target (1..64; macOS ARM has limited RAM)
+        default: '2'
+      cache:
+        description: Reuse SCons objects (disable for a cold baseline)
+        type: boolean
+        default: false
+      linker:
+        type: choice
+        options: [default, bfd, gold, lld, mold]
+        default: default
+  push:
+    branches: [main, 'release/**', 'hotfix/**']
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: engine-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - if: startsWith(github.ref, 'refs/tags/')
+        run: python3 ci/gitflow.py verify-tag
+      - run: python3 -m unittest discover -s ci -p 'test_*.py' -v
+      - id: matrix
+        env:
+          TARGETS: ${{ inputs.targets || 'all' }}
+        run: |
+          python3 ci/build.py --matrix "$TARGETS" > build-plan.json
+          printf 'matrix=%s\n' "$(cat build-plan.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: build-plan
+          path: build-plan.json
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Recover disk space on the disposable Linux runner
+        if: runner.os == 'Linux'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+      - name: Case-sensitive macOS workspace
+        if: runner.os == 'macOS'
+        run: |
+          hdiutil create -size 80g -type SPARSE -fs 'Case-sensitive APFS' -volname ASEBuild "$RUNNER_TEMP/ase-build.sparseimage"
+          hdiutil attach "$RUNNER_TEMP/ase-build.sparseimage" -mountpoint /Volumes/ASEBuild
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: objects
+        if: inputs.cache == true
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/ase-cache
+          key: engine-${{ matrix.id }}-${{ inputs.profile || 'full' }}-${{ inputs.linker || 'default' }}-${{ hashFiles('ci/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            engine-${{ matrix.id }}-${{ inputs.profile || 'full' }}-${{ inputs.linker || 'default' }}-${{ hashFiles('ci/**') }}-
+      - name: Compile, relocate, test and package
+        env:
+          TARGET: ${{ matrix.id }}
+          BUILD_JOBS: ${{ inputs.jobs || '2' }}
+          PROFILE: ${{ inputs.profile || 'full' }}
+          LINKER: ${{ inputs.linker || 'default' }}
+          USE_CACHE: ${{ inputs.cache || false }}
+          ASE_CACHE_HIT: ${{ steps.objects.outputs.cache-hit || 'false' }}
+          ASE_CACHE_RESTORED_KEY: ${{ steps.objects.outputs.cache-matched-key }}
+        shell: bash
+        run: |
+          work="$RUNNER_TEMP/ase-work"
+          if [[ "$RUNNER_OS" == macOS ]]; then work=/Volumes/ASEBuild/work; fi
+          options=()
+          if [[ "$USE_CACHE" == true ]]; then options+=(--cache "$RUNNER_TEMP/ase-cache"); fi
+          python3 ci/build.py --target "$TARGET" --work "$work" --output "$RUNNER_TEMP/ase-output" \
+            --jobs "$BUILD_JOBS" --profile "$PROFILE" --linker "$LINKER" "${options[@]}"
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        if: success() && inputs.cache == true
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/ase-cache
+          key: ${{ steps.objects.outputs.cache-primary-key }}
+      - name: Upload binaries, corresponding sources and diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: engine-${{ matrix.id }}
+          path: ${{ runner.temp }}/ase-output/
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 14
+      - name: Add target report to summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/ase-output/report.md" ]]; then
+            cat "$RUNNER_TEMP/ase-output/report.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+  windows-wsl:
+    if: always() && needs.plan.result == 'success' && contains(needs.plan.outputs.matrix, 'ubuntu-24.04-x86_64')
+    needs: [plan, build]
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: engine-ubuntu-24.04-x86_64
+          path: artifact
+      - name: Validate the Linux package under Windows WSL2
+        shell: pwsh
+        run: ./ci/wsl-test.ps1
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: engine-windows-wsl2-x86_64
+          path: ${{ runner.temp }}/ase-wsl-report/
+          retention-days: 14
+          if-no-files-found: warn
+  report:
+    if: always() && needs.plan.result == 'success'
+    needs: [plan, build, windows-wsl]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      release_ready: ${{ steps.report.outputs.release_ready }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+      - name: Capture GitHub timestamps (setup, cache, uploads and job status)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p report
+          if ! gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" > report/actions-jobs.json; then
+            printf '{"error":"GitHub job timestamps unavailable; consult the Actions UI"}\n' > report/actions-jobs.json
+          fi
+      - id: report
+        run: |
+          python3 ci/aggregate.py --artifacts artifacts --plan artifacts/build-plan/build-plan.json \
+            --jobs report/actions-jobs.json --output report
+          cat report/build-report.md >> "$GITHUB_STEP_SUMMARY"
+          python3 -c 'import json,os; r=json.load(open("report/build-report.json")); open(os.environ["GITHUB_OUTPUT"],"a").write("release_ready="+str(r["all_succeeded"]).lower()+"\n")'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: build-report
+          path: report/
+          retention-days: 90
+  draft-release:
+    if: startsWith(github.ref, 'refs/tags/') && needs.report.outputs.release_ready == 'true'
+    needs: report
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+      - name: Create draft with source/binary pairs and report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          shopt -s nullglob
+          files=(artifacts/engine-*/*.tar.gz artifacts/build-report/build-report.* artifacts/build-report/actions-jobs.json artifacts/build-report/SHA256SUMS)
+          gh release create "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+            --title "ASE engine $TAG" --notes-file artifacts/build-report/build-report.md

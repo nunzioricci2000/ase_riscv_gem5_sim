@@ -1,0 +1,7 @@
+{
+  "gem5": {"url": "https://github.com/cad-polito-it/gem5.git", "commit": "6169bf94dc3f24b05303d2b4dbfbe765c0a04ac0"},
+  "toolchain": {"url": "https://github.com/riscv-collab/riscv-gnu-toolchain.git", "commit": "33eb59addcd65b8fd71f69fb42ccd2ea31bcbaf1", "submodules": ["gcc", "binutils", "newlib", "gdb"]},
+  "python": {"url": "https://github.com/python/cpython.git", "commit": "f08d3c437bc5f41973ddd11f4cfc3d9fe04010f7", "version": "3.10.19"},
+  "scons": "4.8.0",
+  "scons_sha256": "2c7377ff6a22ca136c795ae3dc3d0824696e5478d1e4940f2af75659b0d45454"
+}

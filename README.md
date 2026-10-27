@@ -1,3 +1,6 @@
+<!-- Modified in the personal fork on 2026-10-27: clarify licensing and redistribution requirements. -->
+<!-- Modified in the personal fork on 2026-10-27: link measured binary build and Gitflow workflow. -->
+<!-- Modified in the personal fork on 2026-10-27: reserve main/develop for the personal fork. -->
 # Architetture dei Sistemi di Elaborazione@Politecnico di Torino: SIMULATING A RISC-V CPU WITH GEM5
 
 This README provides an environment for simulating a program on a parametrizable RISC-V CPU and visualize the pipeline. You can see the flow in the Figure below.
@@ -49,6 +52,11 @@ $ ./utils/installation.sh labinf
 This copies `setup_default.labinf` to `setup_default`, verifies the shared compiler and gem5 paths, and creates the launcher without reinstalling the toolchain or gem5.
 
 ### Installation 
+
+Experimental precompiled engine packages, the platform matrix, timestamped
+build reports and the fork's Gitflow release process are described in
+[RELEASES.md](RELEASES.md). These packages contain gem5 and the RISC-V toolchain;
+ASE Studio's desktop frontend remains a separate installation.
 
 In the repository, you can find a script named [```installation.sh```](./utils/installation.sh) (in the utils folder) that can help you to download the cross-compiler, the gem5 simulator and generate the ```setup_default``` file. You can run it with the following command:
 
@@ -242,8 +250,11 @@ Feel free to contribute with issues and pull requests or contact us!
 
 ## Personal fork workflow
 
-The personal development branch is `fork/main`. Keep the original projects as
-`upstream` and publish to your own `origin`. The relative Studio submodule URL
+The simulator's personal stable branch is `main`, with development integrated
+on `develop`. Keep the original project as remote `upstream` and publish to
+your own `origin`. References such as `upstream/main` already identify upstream
+branches; retained copies in the personal repository use `original/`.
+The relative Studio submodule URL
 (`../ase-studio.git`) resolves to the Studio repository under the same GitHub
 owner as the simulator fork. Publish the Studio commit before publishing a
 simulator commit that pins it.
@@ -260,3 +271,14 @@ fast-forward from `origin`; commit or stash tracked local edits first. Upstream
 changes are reviewed and integrated explicitly with Git. Personal program
 directories, pipeline exports, results and the local Python environment are
 excluded from new commits. Existing tracked examples remain versioned.
+
+## Redistribution and license compliance
+
+The project code is **GPL-2.0-only**, except for components with their own
+license notices. You may redistribute and modify it, including commercially,
+subject to the applicable license conditions. Preserve upstream attribution
+and identify changes made in this personal fork. No upstream endorsement is implied.
+
+See [distribution requirements](DISTRIBUTION.md), [third-party components](THIRD_PARTY.md)
+and [contributor instructions](AGENTS.md). Keep all required license notices
+and provide corresponding source when distributing built artifacts.
