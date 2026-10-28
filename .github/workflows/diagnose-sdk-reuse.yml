@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-28: isolate SDK reuse phases without compiling on a cache miss.
 # Modified in the personal fork on 2026-10-28: isolate the remaining Ubuntu 22.04 reuse check after the Debian fix passed.
+# Modified in the personal fork on 2026-10-28: inspect Fedora environment and reuse phases while the final matrix continues.
 name: Diagnose existing SDK reuse
 on:
   push:
@@ -10,15 +11,15 @@ permissions:
   actions: read
 jobs:
   diagnose:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
-      TARGET: ubuntu-22.04-x86_64
+      TARGET: fedora-43-x86_64
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Prepare the disposable Ubuntu environment
+      - name: Prepare the disposable Fedora environment
         timeout-minutes: 5
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
@@ -29,9 +30,9 @@ jobs:
             --mount "type=bind,src=$RUNNER_TEMP/probe-output,dst=/output" \
             --mount "type=bind,src=$RUNNER_TEMP/probe-cache,dst=/cache" \
             -e ASE_REPO=/repo -e ASE_WORK=/work -e ASE_OUTPUT=/output -e ASE_CACHE=/cache \
-            -e ASE_TARGET="$TARGET" -e ASE_FAMILY=debian -e ASE_ARCH=x86_64 \
+            -e ASE_TARGET="$TARGET" -e ASE_FAMILY=fedora -e ASE_ARCH=x86_64 \
             -e BUILD_JOBS=2 -e ASE_PROFILE=full -e GEM5_LINKER=default \
-            ubuntu:22.04 sleep infinity
+            fedora:43 sleep infinity
       - name: Install the build environment and compute component identities
         timeout-minutes: 5
         run: |
