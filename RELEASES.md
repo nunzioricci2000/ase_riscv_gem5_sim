@@ -101,6 +101,14 @@ RISC-V debugging information and GDB functionality remain. Compaction is recorde
 once per component checksum and replaces the archive and its verified manifest.
 The before/after archive sizes are recorded separately from raw binary savings.
 <!-- Modified in the personal fork on 2026-10-28: compact completed cache components while retaining all intermediate object data. -->
+<!-- Modified in the personal fork on 2026-10-28: retire replaced branch caches and record measured Arch storage savings. -->
+The Arch check in run 40618058855 reduced the stored Actions cache from
+3,945,134,044 to 2,464,319,305 bytes without compiling or linking gem5. The one-time
+conversion took 51 seconds. After a successful cache save, the workflow confirms
+the new cache exists and deletes only older copies for the same target, profile,
+linker, branch and cache layout. It preserves newer concurrent saves and caches
+from other branches/targets; a missing replacement never triggers deletion.
+`cache-retention.json` records the removed keys and their sizes.
 The workflow uploads a new Actions cache only when it
 saved a newly built component or compiled/linked something. Exact SDK reuse and
 repackaging do not upload duplicate caches that would evict other targets, except
