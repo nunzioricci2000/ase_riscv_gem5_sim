@@ -3,6 +3,14 @@
 <!-- Modified in the personal fork on 2026-10-27: use main/develop and original/ branch names. -->
 <!-- Modified in the personal fork on 2026-10-27: document automatic builds on main pushes. -->
 <!-- Modified in the personal fork on 2026-10-27: add direct artifact download instructions. -->
+<!-- Modified in the personal fork on 2026-10-27: default component reuse and document diagnostics. -->
+<!-- Modified in the personal fork on 2026-10-27: document runtime coverage and incremental build counters. -->
+<!-- Modified in the personal fork on 2026-10-27: document complete SDK reuse and promotion after merging. -->
+<!-- Modified in the personal fork on 2026-10-28: reduce Linux runtime archives by removing staged debug sections. -->
+<!-- Modified in the personal fork on 2026-10-28: avoid duplicate cache uploads and expose their storage use. -->
+<!-- Modified in the personal fork on 2026-10-28: inspect legacy artifact reports without downloading irrelevant SDKs. -->
+<!-- Modified in the personal fork on 2026-10-28: use measured fast gzip for release archives. -->
+<!-- Modified in the personal fork on 2026-10-28: run automatic package matrices on main/tags and keep branch validation explicit. -->
 # Engine packages and Gitflow
 
 The build workflow produces **experimental engine SDKs**, not a cross-platform
@@ -45,14 +53,103 @@ each target completes; pushing to `main` does not publish a GitHub Release.
 For a controlled experiment, open **Actions → Build engine packages → Run workflow**.
 Choose a branch, target IDs (`all`, `linux`, or comma-separated IDs), `full` or
 `minimal` toolchain profile, compiler jobs, linker and whether to restore the
-SCons cache. The full profile is the default. Minimal omits GDB and restricts
+component and SCons caches. Reuse is enabled by default, including automatic
+push builds. Python, the toolchain and gem5 have separate content identities:
+source revision, component recipes, platform, compiler and installed libraries.
+gem5 additionally includes its patches, Python identity, SCons and linker;
+the toolchain includes its multilib profile. An unchanged component is restored
+after verifying its archive checksum. Changed gem5 inputs fall back to SCons's
+dependency/object cache. Completed components are saved even if a later build
+stage fails. Cache eviction or a missing cache causes a normal source build.
+Every package still undergoes the relocated compile/simulation smoke tests.
+These compile/link RV32 and RV64 C programs and execute integer and floating-point
+assembly. MinorCPU and O3 are tested with direct and cached memory, including
+dependent FP operations, a store of 3.5 and final double-precision writeback of
+4.5 before exit. A short C++ regression also checks optimized TimeBuffer
+initialization before compiling gem5; it detects a startup crash exposed by
+newer optimizing compilers. Passing these checks is not exhaustive ISA validation.
+
+Before those tests, Linux packages remove debug sections from staged host ELF
+executables/shared libraries with `strip --strip-debug`. Dynamic exports and
+ordinary symbols remain; RISC-V target files and static archives are preserved.
+`runtime-compaction.json` records timestamps,
+per-file sizes and saved bytes. The exact sources and build recipes still ship
+alongside binaries; rebuild without this packaging step for full source-level
+debugging. macOS binaries are unchanged by this ELF-specific step.
+Runtime and source archives use gzip level 1. On the local runtime sample,
+level 1 took 8.3 seconds for 245 MB versus 126.1 seconds for 215 MB at level 9;
+the per-target remote reports remain the authoritative release measurements.
+
+Small `engine-index-TARGET` artifacts index successful SDKs for 14 days. When
+an Actions cache has been evicted, the workflow can download a matching SDK,
+verify its checksum and reuse only components with identical inputs. Lookup
+accepts this repository's current branch and main, plus commits from this same
+repository that GitHub confirms are ancestors of the current commit. Thus a
+tested feature build can be reused after its merge into main. Fork PR artifacts
+are excluded. Up to three older artifacts without an index can also be checked;
+their embedded reports must contain matching component identities.
+For those older artifacts, HTTP range requests read only the ZIP index and small
+report first. A full SDK is downloaded only when it provides a missing component
+or an exact complete package. A match for components already in cache is not
+sufficient. Servers without range support fall back to full archive verification.
+Missing/expired artifacts or failed downloads fall back to a source build; no extra cache
+storage allowance or billing setting is enabled.
+`cache-storage.json` inventories bytes and file counts for component archives and
+SCons object namespaces. On Linux, completed toolchain/gem5 component archives
+also remove host ELF debug sections from temporary verified copies before cache
+upload. Live build files and SCons intermediate objects are untouched; target
+RISC-V debugging information and GDB functionality remain. Compaction is recorded
+once per component checksum and replaces the archive and its verified manifest.
+The before/after archive sizes are recorded separately from raw binary savings.
+<!-- Modified in the personal fork on 2026-10-28: compact completed cache components while retaining all intermediate object data. -->
+<!-- Modified in the personal fork on 2026-10-28: retire replaced branch caches and record measured Arch storage savings. -->
+The Arch check in run 40618058855 reduced the stored Actions cache from
+3,945,134,044 to 2,464,319,305 bytes without compiling or linking gem5. The one-time
+conversion took 51 seconds. After a successful cache save, the workflow confirms
+the new cache exists and deletes only older copies for the same target, profile,
+linker, branch and cache layout. It preserves newer concurrent saves and caches
+from other branches/targets; a missing replacement never triggers deletion.
+`cache-retention.json` records the removed keys and their sizes.
+The workflow uploads a new Actions cache only when it
+saved a newly built component or compiled/linked something. Exact SDK reuse and
+repackaging do not upload duplicate caches that would evict other targets, except
+to replace a previously oversized cache with its compacted version. Failed
+or interrupted builds still retain new partial work. Cache eviction can still
+force recompilation when no matching object cache survives; an SDK preserves
+finished components, not every intermediate object needed for a changed source.
+When the entire package identity also matches (components, configuration files,
+build/package scripts, workflow files, notices and recorded job count), both
+the binary and corresponding source archive are downloaded and checksum-verified.
+The SDK is extracted at the relocated test path and the runtime checks run again;
+source fetching, compilation and archiving are skipped explicitly in the report.
+Dependency installation, transfer, checksum and runtime-test costs remain.
+<!-- Modified in the personal fork on 2026-10-28: refresh packaging without fetching unchanged vendor sources. -->
+If all three compiled component identities match but packaging inputs changed,
+the workflow instead verifies both previous archives, refreshes project-owned
+runtime configurations, launchers, tests and notices, then runs the runtime checks.
+It streams the exact previous gem5/Python/toolchain/build-tool source entries into
+a new source archive, replacing the complete project/build-recipe subtree with
+the current files. No vendor checkout or compilation occurs in this path. A
+change to any compiled component prevents this shortcut. The report distinguishes
+`refresh-sdk` and `refresh-sources` from exact SDK reuse and ordinary compilation.
+In run 40622804878 this path passed all runtime checks on Arch and macOS Apple
+Silicon. Measured package work took 166 and 217 seconds respectively, with no
+compilation. The immediately preceding macOS packaging run took 1,053 seconds
+despite restoring all compiled components; its source checkout/archive phases
+accounted for most of that time. These runner/network measurements establish the
+benefit for that comparison rather than a guaranteed duration.
+Disable cache for a source-build timing experiment.
+The full profile is the default. Minimal omits GDB and restricts
 multilib to RV32IMAC/ILP32 and RV64GC/LP64D; both preserve the assembly/runtime
 smoke tests. Python is built without PGO/LTO. gem5 stays `opt` with pipeline
 tracing enabled; switching to `fast` would invalidate that requirement.
 
-Each matrix job has a 350-minute limit; at most three execute concurrently.
-Compilation is expensive. Normal feature/develop pushes run only offline
-checks. Main/release/hotfix pushes and version tags build the entire matrix.
+Each matrix job has a 350-minute limit; up to nine execute concurrently,
+subject to GitHub's available runner capacity.
+Compilation is expensive. Feature/develop/release/hotfix pushes run only offline
+checks. Main pushes and version tags build the entire matrix; use a manual
+dispatch to test selected targets on another branch before merging. This avoids
+automatically packaging the same release both before and after its main merge.
 GitHub runner storage/concurrency limits still apply. Linux jobs free known
 preinstalled SDK directories on the disposable runner; macOS jobs fail with a
 clear preflight diagnostic when there is less than 20 GiB free. No local
@@ -87,11 +184,21 @@ gh run download RUN_ID --repo nunzioricci2000/ase_riscv_gem5_sim \
 `build-report` includes UTC start/end timestamps and monotonic wall durations
 for image pull, dependencies, source fetch, Python configure/build, toolchain
 configure/build, gem5 build, staging, relocation/simulation, source archiving
-and binary archiving. `actions-jobs.json` adds job/step timestamps for runner
+and binary archiving. The large toolchain source download has its own
+`fetch-toolchain` phase after gem5 builds, so early gem5 failures avoid that cost.
+`actions-jobs.json` adds job/step timestamps for runner
 setup, checkout, cache and artifact upload. It is a snapshot taken during the
 report job, so the report job's own final upload/end and a subsequent release
 job are not yet present. Missing or cancelled targets appear explicitly.
 No parallel-build aggregate RAM measurement or unmeasured speedup is claimed.
+Failed phases include the last 4 KiB of their diagnostic log in both reports.
+Component cache hits/misses and transfer times are recorded separately from
+GitHub's outer cache restore. `gem5_work` counts actual compile/link actions and
+cached outputs retrieved from the SCons build log, excluding configure probes.
+These are different units, so they are not presented as a cache-hit percentage.
+The Windows validation can also be rerun against
+an existing Ubuntu artifact by setting `wsl_run_id` in the build workflow;
+this mode skips compilation and only validates that run's Ubuntu SDK.
 
 Local Linux invocation (requires Docker; performs real downloads/builds):
 

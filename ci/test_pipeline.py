@@ -2,6 +2,10 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: failure accounting and packaging regressions.
 # Modified in the personal fork on 2026-10-27: check unprefixed personal branch routes.
+# Modified in the personal fork on 2026-10-27: ignore lookup indexes when verifying distributable artifacts.
+# Modified in the personal fork on 2026-10-27: reject misleading compilation counts from configure probes.
+# Modified in the personal fork on 2026-10-27: preserve the actual build failure instead of optional-probe diagnostics.
+# Modified in the personal fork on 2026-10-27: include shared-object compile actions in timing reports.
 import importlib.util
 import hashlib
 import json
@@ -27,6 +31,33 @@ build, package, aggregate, gitflow = [module(name) for name in ("build", "packag
 
 
 class PipelineTests(unittest.TestCase):
+    def test_gem5_failure_uses_the_correct_diagnostic_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for started in (False, True):
+                out = Path(directory) / str(started)
+                rec = build.Recorder(out, {'target': {'id': 'test'}})
+                (out / 'gem5-scons-config.log').write_text('configure linker failure')
+                message = ('scons: Building targets ...\nactual compiler failure' if started
+                           else 'Cannot find a working Python installation')
+                with self.assertRaises(subprocess.CalledProcessError):
+                    rec.run('gem5-build', [sys.executable, '-c', f'print({message!r}); raise SystemExit(1)'])
+                expected = 'actual compiler failure' if started else 'configure linker failure'
+                self.assertIn(expected, rec.report['stages'][0]['diagnostic'])
+
+    def test_gem5_work_counts_actions_without_configure_probes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / 'gem5.log'
+            log.write_text(" [ CXX] configure probe\nscons: Building targets ...\n"
+                           "Retrieved `build/RISCV/one.o' from cache\n"
+                           " [ CXX] changed.cc -> changed.o\n [ CC] helper.c -> helper.o\n"
+                           " [ SHCXX] shared.cc -> shared.os\n [ SHCC] shared.c -> shared.os\n"
+                           " [ LINK] -> gem5.opt\nscons: done building targets.\n [ CXX] diagnostic tail\n")
+            self.assertEqual(build.gem5_work(log), dict(build_started=True, compile_actions=4,
+                                                       link_actions=1, cache_retrievals=1))
+            log.write_text('gem5 component restored from cache\n')
+            self.assertEqual(build.gem5_work(log), dict(build_started=False, compile_actions=0,
+                                                       link_actions=0, cache_retrievals=0))
+
     def test_target_selection_is_closed_and_preserves_architecture(self):
         rows = build.targets("all")
         self.assertEqual(len({r["id"] for r in rows}), len(rows))
@@ -93,6 +124,8 @@ class PipelineTests(unittest.TestCase):
                 artifacts.append(dict(name=name, bytes=7, sha256=hashlib.sha256(b"archive").hexdigest()))
             (root / "report.json").write_text(json.dumps(dict(target={"id": "one"},
                 status="succeeded", stages=[], artifacts=artifacts)))
+            (root / 'engine-index-one').mkdir()
+            (root / 'engine-index-one/report.json').write_bytes((root / 'report.json').read_bytes())
             self.assertTrue(aggregate.aggregate(root, [{"id": "one"}])["all_succeeded"])
             (root / "ase-engine-one-sources.tar.gz").write_bytes(b"damaged")
             report = aggregate.aggregate(root, [{"id": "one"}])

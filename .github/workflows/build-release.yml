@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: measured builds and draft releases.
 # Modified in the personal fork on 2026-10-27: build packages automatically on every main push.
+# Modified in the personal fork on 2026-10-27: default to component/object reuse and retain completed work after failure.
+# Modified in the personal fork on 2026-10-28: keep new partial work without duplicating unchanged caches.
+# Modified in the personal fork on 2026-10-28: allow the runner to compact cache files written by disposable build containers.
+# Modified in the personal fork on 2026-10-28: retire older same-branch target caches only after verifying the new save.
+# Modified in the personal fork on 2026-10-28: avoid duplicate automatic package matrices on release branches before their main merge.
 name: Build engine packages
 on:
   workflow_dispatch:
@@ -17,23 +22,29 @@ on:
         description: Compiler jobs per target (1..64; macOS ARM has limited RAM)
         default: '2'
       cache:
-        description: Reuse SCons objects (disable for a cold baseline)
+        description: Reuse Python/toolchain/gem5 and SCons objects (disable for a cold baseline)
         type: boolean
-        default: false
+        default: true
       linker:
         type: choice
         options: [default, bfd, gold, lld, mold]
         default: default
+      wsl_run_id:
+        description: Optional existing build run to validate on WSL only (no compilation)
+        default: ''
   push:
-    branches: [main, 'release/**', 'hotfix/**']
+    branches: [main]
     tags: ['v*']
 permissions:
   contents: read
+  actions: read
 concurrency:
-  group: engine-${{ github.ref }}
+  # Modified in the personal fork on 2026-10-27: allow targeted retries while other targets build.
+  group: engine-${{ github.ref }}-${{ inputs.wsl_run_id || 'build' }}-${{ inputs.targets || 'all' }}
   cancel-in-progress: false
 jobs:
   plan:
+    if: inputs.wsl_run_id == ''
     runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
@@ -57,9 +68,12 @@ jobs:
           path: build-plan.json
   build:
     needs: plan
+    permissions:
+      contents: read
+      actions: write
     strategy:
       fail-fast: false
-      max-parallel: 3
+      max-parallel: 9
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 350
@@ -77,36 +91,57 @@ jobs:
           hdiutil attach "$RUNNER_TEMP/ase-build.sparseimage" -mountpoint /Volumes/ASEBuild
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         id: objects
-        if: inputs.cache == true
+        if: github.event_name != 'workflow_dispatch' || inputs.cache == true
         continue-on-error: true
         with:
           path: ${{ runner.temp }}/ase-cache
-          key: engine-${{ matrix.id }}-${{ inputs.profile || 'full' }}-${{ inputs.linker || 'default' }}-${{ hashFiles('ci/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: engine-v2-${{ matrix.id }}-${{ inputs.profile || 'full' }}-${{ inputs.linker || 'default' }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            engine-${{ matrix.id }}-${{ inputs.profile || 'full' }}-${{ inputs.linker || 'default' }}-${{ hashFiles('ci/**') }}-
+            engine-v2-${{ matrix.id }}-${{ inputs.profile || 'full' }}-${{ inputs.linker || 'default' }}-
       - name: Compile, relocate, test and package
         env:
           TARGET: ${{ matrix.id }}
           BUILD_JOBS: ${{ inputs.jobs || '2' }}
           PROFILE: ${{ inputs.profile || 'full' }}
           LINKER: ${{ inputs.linker || 'default' }}
-          USE_CACHE: ${{ inputs.cache || false }}
+          USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.cache == true }}
+          GH_TOKEN: ${{ github.token }}
           ASE_CACHE_HIT: ${{ steps.objects.outputs.cache-hit || 'false' }}
           ASE_CACHE_RESTORED_KEY: ${{ steps.objects.outputs.cache-matched-key }}
         shell: bash
         run: |
           work="$RUNNER_TEMP/ase-work"
           if [[ "$RUNNER_OS" == macOS ]]; then work=/Volumes/ASEBuild/work; fi
-          options=()
+          options=(--jobs "$BUILD_JOBS" --profile "$PROFILE" --linker "$LINKER")
           if [[ "$USE_CACHE" == true ]]; then options+=(--cache "$RUNNER_TEMP/ase-cache"); fi
           python3 ci/build.py --target "$TARGET" --work "$work" --output "$RUNNER_TEMP/ase-output" \
-            --jobs "$BUILD_JOBS" --profile "$PROFILE" --linker "$LINKER" "${options[@]}"
+            "${options[@]}"
+      - name: Measure cache storage and retain only new build work
+        id: cache-policy
+        if: always() && (github.event_name != 'workflow_dispatch' || inputs.cache == true)
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == Linux && -d "$RUNNER_TEMP/ase-cache" ]]; then
+            sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/ase-cache"
+          fi
+          python3 ci/cache_policy.py --output "$RUNNER_TEMP/ase-output" --cache "$RUNNER_TEMP/ase-cache"
       - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        if: success() && inputs.cache == true
+        id: cache-save
+        if: always() && (github.event_name != 'workflow_dispatch' || inputs.cache == true) && steps.cache-policy.outputs.save != 'false'
         continue-on-error: true
         with:
           path: ${{ runner.temp }}/ase-cache
           key: ${{ steps.objects.outputs.cache-primary-key }}
+      - name: Retire superseded cache copies for this target and branch
+        if: always() && steps.cache-save.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CACHE_KEY: ${{ steps.objects.outputs.cache-primary-key }}
+          CACHE_PREFIX: engine-v2-${{ matrix.id }}-${{ inputs.profile || 'full' }}-${{ inputs.linker || 'default' }}-
+        shell: bash
+        run: python3 ci/retain_cache.py --key "$CACHE_KEY" --prefix "$CACHE_PREFIX" --output "$RUNNER_TEMP/ase-output/cache-retention.json"
       - name: Upload binaries, corresponding sources and diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -123,8 +158,15 @@ jobs:
           if [[ -f "$RUNNER_TEMP/ase-output/report.md" ]]; then
             cat "$RUNNER_TEMP/ase-output/report.md" >> "$GITHUB_STEP_SUMMARY"
           fi
+      - name: Index verified components for reuse after cache eviction
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: engine-index-${{ matrix.id }}
+          path: ${{ runner.temp }}/ase-output/report.json
+          retention-days: 14
   windows-wsl:
-    if: always() && needs.plan.result == 'success' && contains(needs.plan.outputs.matrix, 'ubuntu-24.04-x86_64')
+    if: always() && (inputs.wsl_run_id != '' || (needs.plan.result == 'success' && contains(needs.plan.outputs.matrix, 'ubuntu-24.04-x86_64')))
     needs: [plan, build]
     runs-on: windows-2025
     timeout-minutes: 45
@@ -136,6 +178,8 @@ jobs:
         with:
           name: engine-ubuntu-24.04-x86_64
           path: artifact
+          run-id: ${{ inputs.wsl_run_id || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Validate the Linux package under Windows WSL2
         shell: pwsh
         run: ./ci/wsl-test.ps1
