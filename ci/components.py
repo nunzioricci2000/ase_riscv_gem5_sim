@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
+# Modified in the personal fork on 2026-10-28: reconstruct previous identities for verified package-inventory compatibility.
 # Modified in the personal fork on 2026-10-28: include the full-width floating-point register patch and notices.
 # Modified in the personal fork on 2026-10-28: verify complete component identity before refreshing an SDK's packaging.
 # Created in the personal fork on 2026-10-27: verified reuse of completed build components.
@@ -27,7 +28,7 @@ def digest(path):
     return result.hexdigest()
 
 
-def identity(component, repo, output, env):
+def identity(component, repo, output, env, packages_hash=None):
     lock = json.loads((repo / 'ci/sources.lock.json').read_text())
     recipe = (repo / 'ci/steps.sh').read_text()
     phases = {'python': ['python-configure', 'python-build'],
@@ -39,12 +40,12 @@ def identity(component, repo, output, env):
     environment = json.loads((output / 'environment.json').read_text())
     inputs = dict(schema=1, component=component, target=env['ASE_TARGET'],
                   source=lock[component], recipe=fragments,
-                  packages=digest(output / 'packages.txt'),
+                  packages=packages_hash or digest(output / 'packages.txt'),
                   compiler=environment['compiler'], cxx=environment.get('cxx'))
     if component == 'toolchain':
         inputs['profile'] = env['ASE_PROFILE']
     if component == 'gem5':
-        inputs.update(python=identity('python', repo, output, env), scons=lock['scons_sha256'],
+        inputs.update(python=identity('python', repo, output, env, packages_hash), scons=lock['scons_sha256'],
                       linker=env['GEM5_LINKER'],
                       patches={name: digest(repo / name) for name in
                                ('utils/patch_gem5.py', 'utils/gem5-runtime.patch', 'utils/gem5-timebuffer.patch',

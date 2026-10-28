@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
+# Modified in the personal fork on 2026-10-28: save migrated object namespaces once without duplicating ordinary compatibility hits.
 # Created in the personal fork on 2026-10-28: preserve partial compilation while avoiding duplicate cache uploads.
 # Modified in the personal fork on 2026-10-28: verify compacted cache execution, checksums and preservation of originals and objects.
 import hashlib
@@ -14,6 +15,17 @@ from components import restore, save
 
 
 class CachePolicyTests(unittest.TestCase):
+    def test_migrated_object_cache_is_saved_even_without_compilation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            compatibility = {'ignored_packages': ['tzdata']}
+            report = dict(status='succeeded', artifact_reuse={'package_compatibility': compatibility})
+            (output / 'report.json').write_text(json.dumps(report))
+            self.assertFalse(decision(output)[0])
+            compatibility['object_cache_migrated'] = True
+            (output / 'report.json').write_text(json.dumps(report))
+            self.assertTrue(decision(output)[0])
+
     @unittest.skipUnless(platform.system() == 'Linux', 'Host ELF integration check')
     def test_compacted_component_runs_and_keeps_originals_and_intermediate_objects(self):
         with tempfile.TemporaryDirectory() as directory:
