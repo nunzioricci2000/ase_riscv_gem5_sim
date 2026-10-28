@@ -10,6 +10,7 @@
 <!-- Modified in the personal fork on 2026-10-28: avoid duplicate cache uploads and expose their storage use. -->
 <!-- Modified in the personal fork on 2026-10-28: inspect legacy artifact reports without downloading irrelevant SDKs. -->
 <!-- Modified in the personal fork on 2026-10-28: use measured fast gzip for release archives. -->
+<!-- Modified in the personal fork on 2026-10-28: run automatic package matrices on main/tags and keep branch validation explicit. -->
 # Engine packages and Gitflow
 
 The build workflow produces **experimental engine SDKs**, not a cross-platform
@@ -145,8 +146,10 @@ tracing enabled; switching to `fast` would invalidate that requirement.
 
 Each matrix job has a 350-minute limit; up to nine execute concurrently,
 subject to GitHub's available runner capacity.
-Compilation is expensive. Normal feature/develop pushes run only offline
-checks. Main/release/hotfix pushes and version tags build the entire matrix.
+Compilation is expensive. Feature/develop/release/hotfix pushes run only offline
+checks. Main pushes and version tags build the entire matrix; use a manual
+dispatch to test selected targets on another branch before merging. This avoids
+automatically packaging the same release both before and after its main merge.
 GitHub runner storage/concurrency limits still apply. Linux jobs free known
 preinstalled SDK directories on the disposable runner; macOS jobs fail with a
 clear preflight diagnostic when there is less than 20 GiB free. No local

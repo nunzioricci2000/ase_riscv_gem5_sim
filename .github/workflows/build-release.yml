@@ -5,6 +5,7 @@
 # Modified in the personal fork on 2026-10-28: keep new partial work without duplicating unchanged caches.
 # Modified in the personal fork on 2026-10-28: allow the runner to compact cache files written by disposable build containers.
 # Modified in the personal fork on 2026-10-28: retire older same-branch target caches only after verifying the new save.
+# Modified in the personal fork on 2026-10-28: avoid duplicate automatic package matrices on release branches before their main merge.
 name: Build engine packages
 on:
   workflow_dispatch:
@@ -32,7 +33,7 @@ on:
         description: Optional existing build run to validate on WSL only (no compilation)
         default: ''
   push:
-    branches: [main, 'release/**', 'hotfix/**']
+    branches: [main]
     tags: ['v*']
 permissions:
   contents: read
