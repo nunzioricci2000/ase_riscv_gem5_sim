@@ -2,6 +2,7 @@
 # Created in the personal fork on 2026-10-28: isolate SDK reuse phases without compiling on a cache miss.
 # Modified in the personal fork on 2026-10-28: isolate the remaining Ubuntu 22.04 reuse check after the Debian fix passed.
 # Modified in the personal fork on 2026-10-28: inspect Fedora environment and reuse phases while the final matrix continues.
+# Modified in the personal fork on 2026-10-28: inspect complete SDK/build-tool ELF closures and development files without changing production reuse policy.
 name: Diagnose existing SDK reuse
 on:
   push:
@@ -44,32 +45,23 @@ jobs:
           name: reuse-probe-inputs
           path: ${{ runner.temp }}/probe-output/
           retention-days: 14
-      - name: Download and verify a compatible existing SDK
+      - name: Download a verified previous SDK for dependency analysis
         timeout-minutes: 12
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 ci/reuse.py "$RUNNER_TEMP/probe-output" "$RUNNER_TEMP/probe-work/reuse" \
-            "$TARGET" "$RUNNER_TEMP/probe-cache" 2>&1 | tee "$RUNNER_TEMP/probe-output/reuse.log"
-          python3 - <<'PY'
-          import json, os
-          from pathlib import Path
-          path = Path(os.environ['RUNNER_TEMP']) / 'probe-work/reuse/reuse.json'
-          if not path.exists() or not json.loads(path.read_text()).get('refresh_sdk'):
-              raise SystemExit('No complete SDK eligible for this packaging refresh; do not compile')
-          PY
-      - name: Refresh SDK packaging
+          python3 ci/diagnose_fedora_sdk.py prepare "$RUNNER_TEMP/probe-output" "$RUNNER_TEMP/probe-work/reuse"
+      - name: Inspect SDK and build-tool dependencies and changed package contents
         timeout-minutes: 5
-        run: docker exec ase-reuse-probe bash /repo/ci/steps.sh refresh-sdk
-      - name: Test the relocated SDK
+        run: docker exec ase-reuse-probe python3 /repo/ci/diagnose_fedora_sdk.py inspect /output /work/reuse
+      - name: Test the previous SDK with the current system libraries
         timeout-minutes: 5
-        run: docker exec ase-reuse-probe bash /repo/ci/steps.sh smoke
-      - name: Stream unchanged vendor sources into the refreshed archive
-        timeout-minutes: 5
-        run: docker exec ase-reuse-probe bash /repo/ci/steps.sh refresh-sources
-      - name: Create the binary archive
-        timeout-minutes: 3
-        run: docker exec ase-reuse-probe bash /repo/ci/steps.sh archive
+        run: |
+          docker exec ase-reuse-probe python3 /repo/ci/package.py test-bundle "/work/previous-sdk/ase-engine-$TARGET"
+          docker exec ase-reuse-probe "/work/previous-sdk/ase-engine-$TARGET/toolchain/bin/riscv64-unknown-elf-gdb" -nx -batch -ex 'show configuration'
+          docker exec -e "LD_LIBRARY_PATH=/work/previous-sdk/ase-engine-$TARGET/python/lib" ase-reuse-probe \
+            "/work/previous-sdk/ase-engine-$TARGET/python/bin/python3.10" -c \
+            'import ctypes, hashlib, readline, sqlite3, ssl, uuid; assert uuid.uuid1().version == 1; assert uuid.uuid4().version == 4; assert sqlite3.connect(":memory:").execute("select 42").fetchone() == (42,); print(ssl.OPENSSL_VERSION)'
       - name: Record partial archive sizes and clean up the disposable container
         if: always()
         run: |
