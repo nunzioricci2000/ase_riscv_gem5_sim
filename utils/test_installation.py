@@ -196,7 +196,9 @@ echo "$BUILD_JOBS"''', BUILD_JOBS='')
                               GEM5_BUILD_CACHE=str(self.base/'object cache'))
         self.assertEqual(len([call for call in self.calls('git') if call[0] == 'clone']), 3)
         patches = [Path(call[-1]).name for call in self.calls('git') if call[0] == 'apply']
-        self.assertCountEqual(patches, ['gem5-runtime.patch', 'gem5-timebuffer.patch', 'gem5-cxx17.patch'] * 6)
+        # Modified in the personal fork on 2026-10-28: every installer must also apply the full-width FP register fix.
+        self.assertCountEqual(patches, ['gem5-runtime.patch', 'gem5-timebuffer.patch',
+                                      'gem5-cxx17.patch', 'gem5-fpreg.patch'] * 6)
         self.assertEqual(len(self.calls('virtualenv')), 3)
         python_calls = self.calls('python')
         self.assertEqual(len([x for x in python_calls if x[:2] == ['-m', 'pip']]), 3)
