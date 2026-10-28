@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Created in the personal fork on 2026-10-28: isolate SDK reuse phases without compiling on a cache miss.
+name: Diagnose existing SDK reuse
+on:
+  push:
+    branches: [fix/diagnose-sdk-reuse]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      TARGET: debian-12-x86_64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Prepare the disposable Debian environment
+        timeout-minutes: 5
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          mkdir -p "$RUNNER_TEMP/probe-work" "$RUNNER_TEMP/probe-output" "$RUNNER_TEMP/probe-cache"
+          docker run --detach --name ase-reuse-probe \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/repo,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/probe-work,dst=/work" \
+            --mount "type=bind,src=$RUNNER_TEMP/probe-output,dst=/output" \
+            --mount "type=bind,src=$RUNNER_TEMP/probe-cache,dst=/cache" \
+            -e ASE_REPO=/repo -e ASE_WORK=/work -e ASE_OUTPUT=/output -e ASE_CACHE=/cache \
+            -e ASE_TARGET="$TARGET" -e ASE_FAMILY=debian -e ASE_ARCH=x86_64 \
+            -e BUILD_JOBS=2 -e ASE_PROFILE=full -e GEM5_LINKER=default \
+            debian:12 sleep infinity
+      - name: Install the build environment and compute component identities
+        timeout-minutes: 5
+        run: |
+          docker exec ase-reuse-probe bash /repo/ci/steps.sh dependencies
+          docker exec ase-reuse-probe bash /repo/ci/steps.sh environment
+      - name: Retain environment evidence before any SDK transfer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: reuse-probe-inputs
+          path: ${{ runner.temp }}/probe-output/
+          retention-days: 14
+      - name: Download and verify a compatible existing SDK
+        timeout-minutes: 12
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 ci/reuse.py "$RUNNER_TEMP/probe-output" "$RUNNER_TEMP/probe-work/reuse" \
+            "$TARGET" "$RUNNER_TEMP/probe-cache" 2>&1 | tee "$RUNNER_TEMP/probe-output/reuse.log"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path(os.environ['RUNNER_TEMP']) / 'probe-work/reuse/reuse.json'
+          if not path.exists() or not json.loads(path.read_text()).get('refresh_sdk'):
+              raise SystemExit('No complete SDK eligible for this packaging refresh; do not compile')
+          PY
+      - name: Refresh SDK packaging
+        timeout-minutes: 5
+        run: docker exec ase-reuse-probe bash /repo/ci/steps.sh refresh-sdk
+      - name: Test the relocated SDK
+        timeout-minutes: 5
+        run: docker exec ase-reuse-probe bash /repo/ci/steps.sh smoke
+      - name: Stream unchanged vendor sources into the refreshed archive
+        timeout-minutes: 5
+        run: docker exec ase-reuse-probe bash /repo/ci/steps.sh refresh-sources
+      - name: Create the binary archive
+        timeout-minutes: 3
+        run: docker exec ase-reuse-probe bash /repo/ci/steps.sh archive
+      - name: Record partial archive sizes and clean up the disposable container
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          output = Path(os.environ['RUNNER_TEMP']) / 'probe-output'
+          output.mkdir(exist_ok=True)
+          sizes = {p.name: p.stat().st_size for p in output.iterdir() if p.is_file()}
+          (output / 'file-sizes.json').write_text(json.dumps(sizes, indent=2) + '\n')
+          PY
+          docker rm --force ase-reuse-probe || true
+      - name: Retain diagnostics without another copy of binary/source archives
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: reuse-probe-result
+          path: |
+            ${{ runner.temp }}/probe-output/
+            !${{ runner.temp }}/probe-output/*.tar.gz
+            !${{ runner.temp }}/probe-output/*.partial
+          retention-days: 14
