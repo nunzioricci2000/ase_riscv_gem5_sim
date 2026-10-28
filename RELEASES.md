@@ -7,6 +7,7 @@
 <!-- Modified in the personal fork on 2026-10-27: document runtime coverage and incremental build counters. -->
 <!-- Modified in the personal fork on 2026-10-27: document complete SDK reuse and promotion after merging. -->
 <!-- Modified in the personal fork on 2026-10-28: reduce Linux runtime archives by removing staged debug sections. -->
+<!-- Modified in the personal fork on 2026-10-28: avoid duplicate cache uploads and expose their storage use. -->
 <!-- Modified in the personal fork on 2026-10-28: inspect legacy artifact reports without downloading irrelevant SDKs. -->
 <!-- Modified in the personal fork on 2026-10-28: use measured fast gzip for release archives. -->
 # Engine packages and Gitflow
@@ -92,6 +93,13 @@ or an exact complete package. A match for components already in cache is not
 sufficient. Servers without range support fall back to full archive verification.
 Missing/expired artifacts or failed downloads fall back to a source build; no extra cache
 storage allowance or billing setting is enabled.
+`cache-storage.json` inventories bytes and file counts for component archives and
+SCons object namespaces. The workflow uploads a new Actions cache only when it
+saved a newly built component or compiled/linked something. Exact SDK reuse and
+repackaging do not upload duplicate caches that would evict other targets. Failed
+or interrupted builds still retain new partial work. Cache eviction can still
+force recompilation when no matching object cache survives; an SDK preserves
+finished components, not every intermediate object needed for a changed source.
 When the entire package identity also matches (components, configuration files,
 build/package scripts, workflow files, notices and recorded job count), both
 the binary and corresponding source archive are downloaded and checksum-verified.

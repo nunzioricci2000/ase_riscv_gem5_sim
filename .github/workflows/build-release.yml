@@ -2,6 +2,7 @@
 # Created in the personal fork on 2026-10-27: measured builds and draft releases.
 # Modified in the personal fork on 2026-10-27: build packages automatically on every main push.
 # Modified in the personal fork on 2026-10-27: default to component/object reuse and retain completed work after failure.
+# Modified in the personal fork on 2026-10-28: keep new partial work without duplicating unchanged caches.
 name: Build engine packages
 on:
   workflow_dispatch:
@@ -109,8 +110,13 @@ jobs:
           if [[ "$USE_CACHE" == true ]]; then options+=(--cache "$RUNNER_TEMP/ase-cache"); fi
           python3 ci/build.py --target "$TARGET" --work "$work" --output "$RUNNER_TEMP/ase-output" \
             "${options[@]}"
-      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Measure cache storage and retain only new build work
+        id: cache-policy
         if: always() && (github.event_name != 'workflow_dispatch' || inputs.cache == true)
+        continue-on-error: true
+        run: python3 ci/cache_policy.py --output "$RUNNER_TEMP/ase-output" --cache "$RUNNER_TEMP/ase-cache"
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        if: always() && (github.event_name != 'workflow_dispatch' || inputs.cache == true) && steps.cache-policy.outputs.save != 'false'
         continue-on-error: true
         with:
           path: ${{ runner.temp }}/ase-cache
