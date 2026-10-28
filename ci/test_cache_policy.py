@@ -1,14 +1,42 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-28: preserve partial compilation while avoiding duplicate cache uploads.
+# Modified in the personal fork on 2026-10-28: verify compacted cache execution, checksums and preservation of originals and objects.
+import hashlib
 import json
 from pathlib import Path
+import platform
+import subprocess
 import tempfile
 import unittest
 
-from cache_policy import decision, inventory
+from cache_policy import compact_components, decision, inventory
+from components import restore, save
 
 
 class CachePolicyTests(unittest.TestCase):
+    @unittest.skipUnless(platform.system() == 'Linux', 'Host ELF integration check')
+    def test_compacted_component_runs_and_keeps_originals_and_intermediate_objects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, binary = root / 'main.c', root / 'binary'
+            source.write_text('int main(void) { return 0; }\n')
+            subprocess.run(['cc', '-g', str(source), '-o', str(binary)], check=True)
+            digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+            cache = root / 'cache'
+            entry = cache / 'components/gem5/test-key'
+            save(entry, binary)
+            objects = cache / 'objects/active/object'
+            objects.parent.mkdir(parents=True)
+            objects.write_bytes(b'intermediate debug information')
+            result = compact_components(cache, root / 'reports')
+            self.assertGreater(result[0]['host_debug_bytes_removed'], 0)
+            self.assertEqual(hashlib.sha256(binary.read_bytes()).hexdigest(), digest)
+            self.assertEqual(objects.read_bytes(), b'intermediate debug information')
+            self.assertTrue(restore(entry, root / 'restored'))
+            subprocess.run([str(root / 'restored')], check=True)
+            self.assertLess((root / 'restored').stat().st_size, binary.stat().st_size)
+            self.assertEqual(compact_components(cache, root / 'reports'), [])
+
     def test_repackaging_and_exact_sdk_reuse_do_not_upload_an_unchanged_cache(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)

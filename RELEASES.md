@@ -70,8 +70,8 @@ newer optimizing compilers. Passing these checks is not exhaustive ISA validatio
 
 Before those tests, Linux packages remove debug sections from staged host ELF
 executables/shared libraries with `strip --strip-debug`. Dynamic exports and
-ordinary symbols remain; RISC-V target files, static archives and original cached
-build components are preserved. `runtime-compaction.json` records timestamps,
+ordinary symbols remain; RISC-V target files and static archives are preserved.
+`runtime-compaction.json` records timestamps,
 per-file sizes and saved bytes. The exact sources and build recipes still ship
 alongside binaries; rebuild without this packaging step for full source-level
 debugging. macOS binaries are unchanged by this ELF-specific step.
@@ -94,9 +94,17 @@ sufficient. Servers without range support fall back to full archive verification
 Missing/expired artifacts or failed downloads fall back to a source build; no extra cache
 storage allowance or billing setting is enabled.
 `cache-storage.json` inventories bytes and file counts for component archives and
-SCons object namespaces. The workflow uploads a new Actions cache only when it
+SCons object namespaces. On Linux, completed toolchain/gem5 component archives
+also remove host ELF debug sections from temporary verified copies before cache
+upload. Live build files and SCons intermediate objects are untouched; target
+RISC-V debugging information and GDB functionality remain. Compaction is recorded
+once per component checksum and replaces the archive and its verified manifest.
+The before/after archive sizes are recorded separately from raw binary savings.
+<!-- Modified in the personal fork on 2026-10-28: compact completed cache components while retaining all intermediate object data. -->
+The workflow uploads a new Actions cache only when it
 saved a newly built component or compiled/linked something. Exact SDK reuse and
-repackaging do not upload duplicate caches that would evict other targets. Failed
+repackaging do not upload duplicate caches that would evict other targets, except
+to replace a previously oversized cache with its compacted version. Failed
 or interrupted builds still retain new partial work. Cache eviction can still
 force recompilation when no matching object cache survives; an SDK preserves
 finished components, not every intermediate object needed for a changed source.
