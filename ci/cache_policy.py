@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
+# Modified in the personal fork on 2026-10-28: persist a verified object-namespace migration for subsequent incremental builds.
 # Created in the personal fork on 2026-10-28: avoid uploading duplicate caches and expose storage pressure.
 # Modified in the personal fork on 2026-10-28: compact completed host binaries in component caches without touching SCons objects.
 """Save new compilation work; do not evict other targets by duplicating a cache hit."""
@@ -22,6 +23,8 @@ def decision(output):
     if not path.exists():
         return True, 'No build report: conservatively preserve possible partial work'
     report = json.loads(path.read_text())
+    if report.get('artifact_reuse', {}).get('package_compatibility', {}).get('object_cache_migrated'):
+        return True, 'Preserve verified SCons objects under the current package inventory'
     events = output / 'component-cache.jsonl'
     records = [json.loads(line) for line in events.read_text().splitlines()] if events.exists() else report.get('component_cache', [])
     if any(item.get('action') == 'save' and item.get('status') == 'saved' for item in records):
