@@ -5,6 +5,7 @@
 # Modified in the personal fork on 2026-10-27: include C++17 patch sources in the package identity fixture.
 # Modified in the personal fork on 2026-10-27: cover both independent gem5 runtime patches.
 # Modified in the personal fork on 2026-10-27: verify complete SDK identity and safe paired restoration.
+# Modified in the personal fork on 2026-10-28: reject packaging refresh when any compiled component differs.
 import importlib.util
 import io
 import json
@@ -83,6 +84,30 @@ class ComponentTests(unittest.TestCase):
             self.assertTrue(components.restore_sdk(root, 'toolchain', 'exact-inputs', root / 'restored', 'test'))
             self.assertEqual((root / 'restored/bin/cc').read_text(), 'compiler')
             self.assertFalse((root / 'restored/unrelated').exists())
+
+    def test_packaging_refresh_requires_all_component_keys_and_both_checksums(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / 'ase-engine-test.tar.gz'
+            with tarfile.open(binary, 'w:gz') as archive:
+                item = tarfile.TarInfo('ase-engine-test/program')
+                item.size = 7
+                archive.addfile(item, io.BytesIO(b'program'))
+            source = root / 'ase-engine-test-sources.tar.gz'
+            source.write_bytes(b'complete corresponding sources')
+            keys = dict(python='p', toolchain='t', gem5='g')
+            record = dict(refresh_sdk=True, component_keys=keys, archives={p.name: dict(
+                bytes=p.stat().st_size, sha256=components.digest(p)) for p in (binary, source)})
+            (root / 'reuse.json').write_text(json.dumps(record))
+            destination = root / 'first/ase-engine-test'
+            with self.assertRaisesRegex(ValueError, 'compiled components'):
+                components.restore_bundle(root, None, destination, refresh_keys=dict(keys, gem5='changed'))
+            self.assertFalse(destination.exists())
+            components.restore_bundle(root, None, destination, refresh_keys=keys)
+            self.assertEqual((destination / 'program').read_bytes(), b'program')
+            source.write_bytes(b'corrupt')
+            with self.assertRaisesRegex(ValueError, 'checksum'):
+                components.restore_bundle(root, None, root / 'other/ase-engine-test', refresh_keys=keys)
 
     def test_restore_preserves_executables_and_relative_links_and_rejects_corruption(self):
         with tempfile.TemporaryDirectory() as directory:

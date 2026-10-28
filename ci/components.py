@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
 # Modified in the personal fork on 2026-10-28: include the full-width floating-point register patch and notices.
+# Modified in the personal fork on 2026-10-28: verify complete component identity before refreshing an SDK's packaging.
 # Created in the personal fork on 2026-10-27: verified reuse of completed build components.
 # Modified in the personal fork on 2026-10-27: include the TimeBuffer runtime patch in gem5 identity.
 # Modified in the personal fork on 2026-10-27: identify and restore complete source-paired SDKs.
@@ -90,10 +91,13 @@ def extract(archive, destination):
         extract_members(tar, destination, tar.getmembers())
 
 
-def restore_bundle(directory, key, destination):
+def restore_bundle(directory, key, destination, refresh_keys=None):
     record = json.loads((directory / 'reuse.json').read_text())
-    if not record.get('whole_sdk') or record.get('bundle_key') != key:
-        raise ValueError('Complete SDK inputs do not match this build')
+    if refresh_keys is None:
+        if not record.get('whole_sdk') or record.get('bundle_key') != key:
+            raise ValueError('Complete SDK inputs do not match this build')
+    elif not record.get('refresh_sdk') or record.get('component_keys') != refresh_keys:
+        raise ValueError('All compiled components must match before refreshing packaging')
     expected = {destination.name + '.tar.gz', destination.name + '-sources.tar.gz'}
     if set(record.get('archives', {})) != expected:
         raise ValueError('Complete SDK requires a matching binary/source pair')

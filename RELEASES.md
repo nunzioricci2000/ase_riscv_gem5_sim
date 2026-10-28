@@ -122,6 +122,15 @@ the binary and corresponding source archive are downloaded and checksum-verified
 The SDK is extracted at the relocated test path and the runtime checks run again;
 source fetching, compilation and archiving are skipped explicitly in the report.
 Dependency installation, transfer, checksum and runtime-test costs remain.
+<!-- Modified in the personal fork on 2026-10-28: refresh packaging without fetching unchanged vendor sources. -->
+If all three compiled component identities match but packaging inputs changed,
+the workflow instead verifies both previous archives, refreshes project-owned
+runtime configurations, launchers, tests and notices, then runs the runtime checks.
+It streams the exact previous gem5/Python/toolchain/build-tool source entries into
+a new source archive, replacing the complete project/build-recipe subtree with
+the current files. No vendor checkout or compilation occurs in this path. A
+change to any compiled component prevents this shortcut. The report distinguishes
+`refresh-sdk` and `refresh-sources` from exact SDK reuse and ordinary compilation.
 Disable cache for a source-build timing experiment.
 The full profile is the default. Minimal omits GDB and restricts
 multilib to RV32IMAC/ILP32 and RV64GC/LP64D; both preserve the assembly/runtime

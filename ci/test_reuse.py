@@ -3,6 +3,7 @@
 # Created in the personal fork on 2026-10-27: verify binary/source integrity and complete-versus-component reuse.
 # Modified in the personal fork on 2026-10-27: validate migration from early component-cache reports.
 # Modified in the personal fork on 2026-10-28: avoid irrelevant SDK downloads and exercise sparse ZIP report reads.
+# Modified in the personal fork on 2026-10-28: require both source/binary archives for packaging-only refreshes.
 import hashlib
 import importlib.util
 import io
@@ -38,6 +39,7 @@ class ReuseTests(unittest.TestCase):
         self.assertTrue(reuse.useful(old, requested, {'python': 'same-python'}, 'new', 'test'))
         exact = dict(old, component_keys=requested, bundle_key='new')
         self.assertTrue(reuse.useful(exact, requested, {}, 'new', 'test'))
+        self.assertTrue(reuse.useful(exact, requested, {}, 'changed-packaging', 'test'))
         self.assertFalse(reuse.useful(dict(exact, status='failed'), requested, {}, 'new', 'test'))
 
     def artifact(self, root, bundle_key='same', corrupt=False, omit_sources=False, target='test', events=None):
@@ -94,13 +96,23 @@ class ReuseTests(unittest.TestCase):
             self.assertEqual(set(record['archives']), {'ase-engine-test.tar.gz', 'ase-engine-test-sources.tar.gz'})
             self.assertEqual((root / 'out/ase-engine-test-sources.tar.gz').read_bytes(), b'complete sources')
 
-    def test_packaging_changes_allow_component_reuse_only(self):
+    def test_packaging_changes_reuse_the_verified_source_pair_when_all_components_match(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             record = reuse.unpack_verified(self.artifact(root), root / 'out', 'test',
                                            {'gem5': 'g', 'python': 'p'}, 'changed-recipe')
             self.assertFalse(record['whole_sdk'])
+            self.assertTrue(record['refresh_sdk'])
             self.assertTrue((root / 'out/ase-engine-test.tar.gz').exists())
+            self.assertTrue((root / 'out/ase-engine-test-sources.tar.gz').exists())
+
+    def test_changed_component_prevents_packaging_refresh(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            record = reuse.unpack_verified(self.artifact(root), root / 'out', 'test',
+                                           {'gem5': 'changed', 'python': 'p'}, 'changed-recipe')
+            self.assertFalse(record['whole_sdk'])
+            self.assertFalse(record['refresh_sdk'])
             self.assertFalse((root / 'out/ase-engine-test-sources.tar.gz').exists())
 
     def test_corrupt_or_missing_sources_cannot_be_whole_sdk_hits(self):

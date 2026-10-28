@@ -4,6 +4,7 @@
 # Modified in the personal fork on 2026-10-27: prefer complete SDK/source pairs and support older unindexed artifacts.
 # Modified in the personal fork on 2026-10-27: recover proven component identities from early cache reports.
 # Modified in the personal fork on 2026-10-28: inspect legacy reports with partial downloads and request only missing components.
+# Modified in the personal fork on 2026-10-28: refresh packaging from an existing source-paired SDK when every compiled component is unchanged.
 """Recover verified components or a complete SDK; always test the resulting binaries."""
 import hashlib
 import io
@@ -55,7 +56,7 @@ def complete_match(report, requested, bundle_key):
 
 def useful(report, requested, missing, bundle_key, target):
     return (matching(report, requested, target) and
-            (complete_match(report, requested, bundle_key) or matching(report, missing, target)))
+            (component_keys(report) == requested or matching(report, missing, target)))
 
 
 class RangeReader(io.RawIOBase):
@@ -160,7 +161,8 @@ def unpack_verified(download, destination, target, requested, bundle_key):
         if not {binary, sources} <= entries.keys() or not {binary, sources} <= set(archive.namelist()):
             raise ValueError('Previous SDK does not have its corresponding source archive')
         whole = complete_match(report, requested, bundle_key)
-        selected = (binary, sources) if whole else (binary,)
+        refresh = not whole and component_keys(report) == requested
+        selected = (binary, sources) if whole or refresh else (binary,)
         destination.mkdir(parents=True, exist_ok=True)
         for name in selected:
             temporary = destination / (name + '.partial')
@@ -173,7 +175,7 @@ def unpack_verified(download, destination, target, requested, bundle_key):
             finally:
                 temporary.unlink(missing_ok=True)
         return dict(archive=binary, component_keys=component_keys(report),
-                    sha256=entries[binary]['sha256'], whole_sdk=whole,
+                    sha256=entries[binary]['sha256'], whole_sdk=whole, refresh_sdk=refresh,
                     bundle_key=report.get('bundle_key'),
                     archives={name: entries[name] for name in selected})
 
@@ -244,9 +246,9 @@ def main():
         if not useful(report, requested, missing, bundle_key, target):
             continue
         whole = complete_match(report, requested, bundle_key)
-        if whole or not all_cached:
-            score = (whole, sum(component_keys(report).get(n) == k for n, k in missing.items()))
-            candidates.append((score, index['workflow_run']['id']))
+        refresh = component_keys(report) == requested
+        score = (whole, refresh, sum(component_keys(report).get(n) == k for n, k in missing.items()))
+        candidates.append((score, index['workflow_run']['id']))
     seen = set()
     for _, run_id in sorted(candidates, key=lambda c: c[0], reverse=True):
         artifacts = json.loads(api(f'repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100'))['artifacts']
@@ -256,7 +258,7 @@ def main():
             if recover(repo, artifact, run_id, output, destination, target, requested, bundle_key):
                 return
     if all_cached:
-        print('No identical complete SDK; all components are already in the restored cache')
+        print('No retained SDK with all matching components; use the restored component cache')
         return
     # Transitional support for builds made before small indexes were introduced.
     # Inspect metadata first; download only a source-paired SDK with useful inputs.

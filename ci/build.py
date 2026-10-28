@@ -7,6 +7,7 @@
 # Modified in the personal fork on 2026-10-27: skip fetch/build/archive for an exact SDK/source pair and retest it.
 # Modified in the personal fork on 2026-10-27: keep compile errors separate from optional configure probes.
 # Modified in the personal fork on 2026-10-27: count shared-object compilation actions as well.
+# Modified in the personal fork on 2026-10-28: refresh packaging with verified unchanged vendor sources instead of fetching them again.
 """Build the engine SDK, preserving failure reports; never publish from this script."""
 import argparse
 from datetime import datetime, timezone
@@ -282,6 +283,12 @@ def main(argv=None):
                         rec.run('restore-sdk', prefix + ['restore-sdk'], env, args.stage_timeout)
                         rec.run('smoke', prefix + ['smoke'], env, args.stage_timeout)
                         rec.report['skipped_phases'] = [p for p in PHASES[PHASES.index('fetch'):] if p != 'smoke']
+                        break
+                    if record.exists() and json.loads(record.read_text()).get('refresh_sdk'):
+                        for refresh in ('refresh-sdk', 'smoke', 'refresh-sources', 'archive'):
+                            rec.run(refresh, prefix + [refresh], env, args.stage_timeout)
+                        rec.report['skipped_phases'] = [p for p in PHASES[PHASES.index('fetch'):]
+                                                        if p not in ('smoke', 'archive')]
                         break
             else:
                 rec.run(phase, prefix + [phase], env, args.stage_timeout)
