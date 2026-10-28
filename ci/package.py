@@ -1,8 +1,17 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
+# Modified in the personal fork on 2026-10-28: include the full-width floating-point register patch and notices.
 # Modified in the personal fork on 2026-10-27: apply the shared gem5 register and syscall fixes.
+# Modified in the personal fork on 2026-10-27: include shared patch tooling in rebuild sources.
+# Modified in the personal fork on 2026-10-27: test FP execution on Minor/O3 and ship TimeBuffer fix sources.
+# Modified in the personal fork on 2026-10-27: restore and retest exact SDK/source pairs without rebuilding.
+# Modified in the personal fork on 2026-10-27: distribute the DRAMPower comparator patch and BSD notices.
+# Modified in the personal fork on 2026-10-28: compact staged host ELF files before relocation/runtime checks.
+# Modified in the personal fork on 2026-10-28: use fast gzip for runtime/source archives after measuring compression tradeoffs.
+# Modified in the personal fork on 2026-10-28: stream unchanged vendor sources into refreshed packages without source checkouts or compilation.
 # Created in the personal fork on 2026-10-27: source-complete engine SDK packaging.
 """Called inside the target build environment by steps.sh."""
+import gzip
 import json
 import os
 from pathlib import Path
@@ -47,13 +56,62 @@ def source_archive(path, repositories, extras):
         if ".git" in Path(member.name).parts or "__pycache__" in Path(member.name).parts or member.name.endswith(".pyc"):
             return None
         return member
-    with tarfile.open(temporary, "w:gz") as archive:
+    with tarfile.open(temporary, "w:gz", compresslevel=1) as archive:
         for name, repo in repositories.items():
             for relative in tracked_files(repo):
                 archive.add(repo / relative, arcname=f"sources/{name}/{relative}", recursive=False)
         for path, name in extras:
             archive.add(path, arcname=f"sources/{name}", filter=keep_source)
     temporary.replace(destination)
+
+
+def project_source_extras(repo):
+    extras = [(repo / "ci", "project/ci"), (repo / "gem5", "project/gem5"),
+              (repo / ".github/workflows", "project/.github/workflows")]
+    names = ("LICENSE", "THIRD_PARTY.md", "DISTRIBUTION.md", "RELEASES.md")
+    extras += [(repo / name, f"project/{name}") for name in names]
+    extras += [(repo / 'utils' / name, f'project/utils/{name}') for name in
+               ('patch_gem5.py', 'gem5-runtime.patch', 'gem5-runtime.patch.license',
+                'gem5-timebuffer.patch', 'gem5-timebuffer.patch.license',
+                'gem5-cxx17.patch', 'gem5-cxx17.patch.license',
+                'gem5-fpreg.patch', 'gem5-fpreg.patch.license')]
+    return extras
+
+
+def refresh_source_archive(previous, destination, extras):
+    """Copy verified vendor sources byte-for-byte; replace all project/build recipes."""
+    temporary = destination.with_suffix('.partial')
+    required = {'gem5', 'python', 'toolchain', 'build-tools'}
+    seen = set()
+    def keep_source(member):
+        parts = Path(member.name).parts
+        return None if '.git' in parts or '__pycache__' in parts or member.name.endswith('.pyc') else member
+    try:
+        with previous.open('rb') as raw_input, gzip.GzipFile(fileobj=raw_input, mode='rb') as uncompressed, \
+                tarfile.open(fileobj=uncompressed, mode='r|', bufsize=1024 * 1024) as old, \
+                temporary.open('wb') as raw_output, gzip.GzipFile(fileobj=raw_output, mode='wb', compresslevel=1) as compressed, \
+                tarfile.open(fileobj=compressed, mode='w|', bufsize=1024 * 1024) as new:
+            for member in old:
+                parts = Path(member.name).parts
+                if Path(member.name).is_absolute() or '..' in parts or not parts or parts[0] != 'sources':
+                    raise ValueError('Unsafe source archive path')
+                if len(parts) < 2 or parts[1] == 'project':
+                    continue
+                if parts[1] not in required:
+                    raise ValueError('Unexpected vendor source directory')
+                seen.add(parts[1])
+                if member.isfile():
+                    with old.extractfile(member) as stream:
+                        new.addfile(member, stream)
+                else:
+                    new.addfile(member)
+            if seen != required:
+                raise ValueError('Previous source archive is incomplete')
+            for path, name in extras:
+                new.add(path, arcname=f'sources/{name}', filter=keep_source)
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def validate_links(root):
@@ -100,6 +158,91 @@ def smoke(bundle, output):
         raise RuntimeError("Simulation exited before the final division wrote back 63 / 9 = 7")
     if "exiting with last active thread context" not in (output / "simulation.log").read_text():
         raise RuntimeError("Smoke program did not exit normally (possibly hit the tick limit)")
+    fp_elf = output / "smoke-fp.elf"
+    run(gcc, "-march=rv32imafd_zicsr_zifencei", "-mabi=ilp32", "-nostdlib",
+        bundle / "tests/smoke-fp.s", "-o", fp_elf, env=env)
+    checked = ["rv32imac-ilp32-link", "rv64gc-lp64d-link", "minor-final-integer-writeback"]
+    for cpu, script in (("minor", "riscv_in_order_hen_patt.py"), ("o3", "riscv_o3_custom.py")):
+        for memory in ("direct", "cache"):
+            name = f"{cpu}-{memory}-fp"
+            trace = output / f"{name}.trace"
+            log_path = output / f"{name}.log"
+            outdir = output / f"{name}-m5out"
+            options = (["--cpu-type=MinorCPU", "--caches"] if cpu == "minor"
+                       else ["--directory", outdir])
+            with log_path.open("w") as log:
+                run(simulator, "--debug-flags=MinorGUI,Exec", f"--debug-file={trace}",
+                    f"--outdir={outdir}", bundle / "configs" / script,
+                    "--cmd", fp_elf, "--abs-max-tick=100000000", f"--ase-memory-mode={memory}",
+                    *options, env=env, cwd=output, timeout=120, stdout=log, stderr=subprocess.STDOUT)
+            text = trace.read_text()
+            if not re.search(r"fsw\s+f3,\s*24\(x5\).*\bD=0x0*40600000\b", text):
+                raise RuntimeError(f"{name}: dependent FP operations did not store 3.5")
+            if not re.search(r"fdiv_d\s+f6,\s*f4,\s*f5.*\bD=0x4012000000000000\b", text):
+                raise RuntimeError(f"{name}: final FP division did not write back 4.5")
+            if "exiting with last active thread context" not in log_path.read_text():
+                raise RuntimeError(f"{name}: simulation did not exit normally")
+            if cpu == "minor" and "ASE_INITIAL_REGISTERS_BEGIN thread=0" not in text:
+                raise RuntimeError(f"{name}: initial register snapshot missing")
+            checked.append(name)
+    (output / "verified-runtime.json").write_text(json.dumps(checked, indent=2) + "\n")
+
+
+def populate_runtime_metadata(bundle, repo, output, target, sources=None):
+    """Refresh project-owned files while preserving unchanged vendor runtimes/notices."""
+    if (bundle / "configs").exists():
+        shutil.rmtree(bundle / "configs")
+    shutil.copytree(repo / "gem5", bundle / "configs", ignore=shutil.ignore_patterns("__pycache__"))
+    (bundle / "bin").mkdir(exist_ok=True)
+    shutil.copy2(repo / "ci/gem5-launcher.sh", bundle / "bin/gem5")
+    (bundle / "bin/gem5").chmod(0o755)
+    from compact import compact_runtime
+    compact_runtime(bundle, output / 'runtime-compaction.json')
+    if (bundle / "tests").exists():
+        shutil.rmtree(bundle / "tests")
+    (bundle / "tests").mkdir()
+    shutil.copy2(repo / "ci/smoke.s", bundle / "tests/smoke.s")
+    shutil.copy2(repo / "ci/smoke-fp.s", bundle / "tests/smoke-fp.s")
+    shutil.copy2(repo / "ci/package.py", bundle / "tests/package.py")
+    for name in ("LICENSE", "THIRD_PARTY.md", "DISTRIBUTION.md"):
+        shutil.copy2(repo / name, bundle / name)
+    shutil.copy2(output / "packages.txt", bundle / "packages.txt")
+    shutil.copy2(output / "environment.json", bundle / "environment.json")
+    # Collect all upstream license/notice files, with paths preserving provenance.
+    if sources is not None:
+        for component in ("python", "gem5", "toolchain"):
+            for relative in tracked_files(sources / component):
+                if relative.name.lower().startswith(("license", "copying", "notice", "copyright", "authors")):
+                    src = sources / component / relative
+                    if src.is_file():
+                        dest = bundle / "licenses" / component / relative
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src, dest)
+    for name in ("gem5-runtime.patch.license", "gem5-timebuffer.patch.license", "gem5-cxx17.patch.license", "gem5-fpreg.patch.license"):
+        destination = bundle / "licenses/gem5" / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(repo / "utils" / name, destination)
+    manifest = dict(target=target, sources=json.loads((repo / "ci/sources.lock.json").read_text()),
+                    profile=os.environ["ASE_PROFILE"], jobs=int(os.environ["BUILD_JOBS"]),
+                    linker=os.environ["GEM5_LINKER"], gui_included=False, archive_compression='gzip level 1',
+                    runtime_dependencies="System libraries listed in packages.txt and runtime-links.txt",
+                    source_archive=f"ase-engine-{target}-sources.tar.gz")
+    (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    (bundle / "manifest.json.license").write_text("SPDX-License-Identifier: GPL-2.0-only\n")
+    shutil.copy2(output / 'runtime-compaction.json', bundle / 'runtime-compaction.json')
+    (bundle / 'runtime-compaction.json.license').write_text('SPDX-License-Identifier: GPL-2.0-only\n')
+    (bundle / "README.txt").write_text(
+        "ASE engine SDK — personal fork, experimental until tested on your platform.\n"
+        "This contains gem5.opt, a bare-metal RV32/RV64 toolchain and Python 3.10.\n"
+        "Extract on the matching distribution/architecture. System shared libraries\n"
+        "remain required: see packages.txt and runtime-links.txt. This is not a\n"
+        "universal static binary or a native Windows executable. Windows uses WSL2.\n"
+        "Run bin/gem5 --help. In ASE Studio Settings select bin/gem5 as gem5 and\n"
+        "toolchain/bin as the RISC-V toolchain. The GTK GUI is installed separately.\n"
+        "Keep the matching sources archive and notices with any redistribution.\n"
+        "Test: ASE_REPO=. ASE_WORK=unused ASE_OUTPUT=smoke ASE_TARGET=unused "
+        "python3 tests/package.py test-bundle /absolute/path/to/this/sdk\n")
+    validate_links(bundle)
 
 
 def main():
@@ -146,6 +289,14 @@ def main():
         # Preserve the original BSD notice; do not relabel upstream code GPL.
         path.write_text(content.replace(old, new).replace("Import('*')",
             "# Modified in the personal fork on 2026-10-27: retain protobuf transitive link flags.\nImport('*')", 1))
+        path = sources / 'gem5/site_scons/gem5_scons/defaults.py'
+        content = path.read_text()
+        old = '            "LD_LIBRARY_PATH",\n'
+        if content.count(old) != 1:
+            raise RuntimeError('Pinned gem5 Python environment patch context changed')
+        path.write_text(content.replace(old, old +
+            '            "DYLD_LIBRARY_PATH",\n            "PYTHONHOME",\n').replace(
+                'import os\n', '# Modified in the personal fork on 2026-10-27: preserve the embedded Python runtime environment.\nimport os\n', 1))
     elif phase == "stage":
         bundle.mkdir(parents=True)
         shutil.copytree(prefix / "toolchain", bundle / "toolchain", symlinks=True)
@@ -155,47 +306,23 @@ def main():
         shutil.copy2(sources / "gem5/build/RISCV/gem5.opt", bundle / "gem5/bin/gem5.opt")
         shutil.copytree(sources / "gem5/configs", bundle / "gem5/configs",
                         ignore=shutil.ignore_patterns("__pycache__"))
-        shutil.copytree(repo / "gem5", bundle / "configs", ignore=shutil.ignore_patterns("__pycache__"))
-        (bundle / "bin").mkdir()
-        shutil.copy2(repo / "ci/gem5-launcher.sh", bundle / "bin/gem5")
-        (bundle / "bin/gem5").chmod(0o755)
-        (bundle / "tests").mkdir()
-        shutil.copy2(repo / "ci/smoke.s", bundle / "tests/smoke.s")
-        shutil.copy2(repo / "ci/package.py", bundle / "tests/package.py")
-        for name in ("LICENSE", "THIRD_PARTY.md", "DISTRIBUTION.md"):
-            shutil.copy2(repo / name, bundle / name)
-        shutil.copy2(output / "packages.txt", bundle / "packages.txt")
-        shutil.copy2(output / "environment.json", bundle / "environment.json")
-        # Collect all upstream license/notice files, with paths preserving provenance.
-        for component in ("python", "gem5", "toolchain"):
-            for relative in tracked_files(sources / component):
-                if relative.name.lower().startswith(("license", "copying", "notice", "copyright", "authors")):
-                    src = sources / component / relative
-                    if src.is_file():
-                        dest = bundle / "licenses" / component / relative
-                        dest.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(src, dest)
-        manifest = dict(target=target, sources=json.loads((repo / "ci/sources.lock.json").read_text()),
-                        profile=os.environ["ASE_PROFILE"], jobs=int(os.environ["BUILD_JOBS"]),
-                        linker=os.environ["GEM5_LINKER"], gui_included=False,
-                        runtime_dependencies="System libraries listed in packages.txt and runtime-links.txt",
-                        source_archive=f"ase-engine-{target}-sources.tar.gz")
-        (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-        (bundle / "manifest.json.license").write_text("SPDX-License-Identifier: GPL-2.0-only\n")
-        (bundle / "README.txt").write_text(
-            "ASE engine SDK — personal fork, experimental until tested on your platform.\n"
-            "This contains gem5.opt, a bare-metal RV32/RV64 toolchain and Python 3.10.\n"
-            "Extract on the matching distribution/architecture. System shared libraries\n"
-            "remain required: see packages.txt and runtime-links.txt. This is not a\n"
-            "universal static binary or a native Windows executable. Windows uses WSL2.\n"
-            "Run bin/gem5 --help. In ASE Studio Settings select bin/gem5 as gem5 and\n"
-            "toolchain/bin as the RISC-V toolchain. The GTK GUI is installed separately.\n"
-            "Keep the matching sources archive and notices with any redistribution.\n"
-            "Test: ASE_REPO=. ASE_WORK=unused ASE_OUTPUT=smoke ASE_TARGET=unused "
-            "python3 tests/package.py test-bundle /absolute/path/to/this/sdk\n")
-        validate_links(bundle)
+        populate_runtime_metadata(bundle, repo, output, target, sources)
         # Hide the original prefix so smoke tests cannot accidentally use its libraries.
         prefix.rename(work / "original-prefix-not-for-runtime")
+    elif phase == "restore-sdk":
+        from components import restore_bundle
+        record = restore_bundle(work / 'reuse', (output / 'bundle-key.txt').read_text().strip(), bundle)
+        for name in record['archives']:
+            shutil.copy2(work / 'reuse' / name, output / name)
+    elif phase == "refresh-sdk":
+        from components import restore_bundle
+        keys = json.loads((output / 'component-keys.json').read_text())
+        restore_bundle(work / 'reuse', None, bundle, refresh_keys=keys)
+        populate_runtime_metadata(bundle, repo, output, target)
+    elif phase == "refresh-sources":
+        # restore_bundle verified both archive checksums before any runtime test.
+        name = f'ase-engine-{target}-sources.tar.gz'
+        refresh_source_archive(work / 'reuse' / name, output / name, project_source_extras(repo))
     elif phase in ("smoke", "test-bundle"):
         if phase == "test-bundle":
             bundle = Path(sys.argv[2]).resolve()
@@ -208,9 +335,7 @@ def main():
                     env=dict(os.environ, LD_LIBRARY_PATH=str(bundle / "python/lib")))
         shutil.copy2(output / "runtime-links.txt", bundle / "runtime-links.txt")
     elif phase == "sources":
-        extras = [(repo / "ci", "project/ci"), (repo / "gem5", "project/gem5"),
-                  (repo / ".github/workflows", "project/.github/workflows")]
-        extras += [(repo / name, f"project/{name}") for name in ("LICENSE", "THIRD_PARTY.md", "DISTRIBUTION.md", "RELEASES.md")]
+        extras = project_source_extras(repo)
         extras += [(p, f"build-tools/{p.name}") for p in (sources / "build-tools").iterdir()]
         source_archive(output / f"ase-engine-{target}-sources.tar.gz",
                        {name: sources / name for name in ("gem5", "python", "toolchain")}, extras)
@@ -220,7 +345,7 @@ def main():
         (output / "source-revisions.json").write_text(json.dumps(revisions, indent=2) + "\n")
     elif phase == "archive":
         temporary = output / f"ase-engine-{target}.tar.partial"
-        with tarfile.open(temporary, "w:gz") as archive:
+        with tarfile.open(temporary, "w:gz", compresslevel=1) as archive:
             archive.add(bundle, arcname=bundle.name)
         temporary.replace(output / f"ase-engine-{target}.tar.gz")
     else:

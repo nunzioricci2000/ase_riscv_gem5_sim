@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: isolated engine build stages.
+# Modified in the personal fork on 2026-10-27: reuse components and fix portable SCons bootstrap.
 set -euo pipefail
 : "${ASE_REPO:?}" "${ASE_WORK:?}" "${ASE_OUTPUT:?}" "${ASE_FAMILY:?}" "${BUILD_JOBS:?}"
 sources="$ASE_WORK/sources"
@@ -78,16 +79,17 @@ dependencies)
     ;;
 environment)
     python3 "$ASE_REPO/ci/package.py" environment
+    python3 "$ASE_REPO/ci/components.py" keys all
     ;;
 fetch)
     checkout python
-    checkout toolchain
     checkout gem5
-    # Only these projects are used by the newlib build; never fetch QEMU/LLVM/glibc.
-    git -C "$sources/toolchain" submodule update --init --depth 1 gcc binutils newlib gdb
     python3 "$ASE_REPO/ci/package.py" patch-gem5
-    python3 -m pip download --no-deps --no-binary=:all: --dest "$sources/build-tools" \
-        "scons==$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["scons"])' "$ASE_REPO/ci/sources.lock.json")"
+    # Fetch the pinned source directly: distro pip versions can misread its metadata.
+    mkdir -p "$sources/build-tools"
+    curl --fail --location --retry 3 \
+        'https://files.pythonhosted.org/packages/ec/5c/cc835a17633de8b260ec1a6e527b5c57f4975cee5949f49e57ad4d5fab4b/scons-4.8.0.tar.gz' \
+        --output "$sources/build-tools/scons-4.8.0.tar.gz"
     python3 - "$ASE_REPO/ci/sources.lock.json" "$sources/build-tools" <<'PY'
 import hashlib, json, pathlib, sys
 lock = json.load(open(sys.argv[1]))
@@ -98,7 +100,17 @@ PY
     mkdir "$ASE_WORK/scons"
     tar -xf "$sources"/build-tools/scons-*.tar.gz --strip-components=1 -C "$ASE_WORK/scons"
     ;;
+fetch-toolchain)
+    # Modified in the personal fork on 2026-10-27: avoid large downloads when gem5 fails early.
+    checkout toolchain
+    # Only these projects are used by the newlib build; never fetch QEMU/LLVM/glibc.
+    git -C "$sources/toolchain" submodule update --init --depth 1 gcc binutils newlib gdb
+    ;;
 python-configure)
+    if python3 "$ASE_REPO/ci/components.py" restore python; then
+        touch "$ASE_WORK/python-restored"
+        exit 0
+    fi
     mkdir "$ASE_WORK/python-build"
     cd "$ASE_WORK/python-build"
     options=(--prefix="$prefix/python" --enable-shared --with-ensurepip=no)
@@ -107,11 +119,17 @@ python-configure)
     "$sources/python/configure" "${options[@]}"
     ;;
 python-build)
+    [[ ! -f "$ASE_WORK/python-restored" ]] || exit 0
     make -C "$ASE_WORK/python-build" -j "$BUILD_JOBS"
     make -C "$ASE_WORK/python-build" install
     "$prefix/python/bin/python3.10" -c 'import ssl, ctypes, zlib; print(ssl.OPENSSL_VERSION)'
+    python3 "$ASE_REPO/ci/components.py" save python
     ;;
 toolchain-configure)
+    if python3 "$ASE_REPO/ci/components.py" restore toolchain; then
+        touch "$ASE_WORK/toolchain-restored"
+        exit 0
+    fi
     mkdir "$ASE_WORK/toolchain-build"
     cd "$ASE_WORK/toolchain-build"
     options=(--prefix="$prefix/toolchain" --enable-multilib)
@@ -124,22 +142,57 @@ toolchain-configure)
     "$sources/toolchain/configure" "${options[@]}"
     ;;
 toolchain-build)
+    [[ ! -f "$ASE_WORK/toolchain-restored" ]] || exit 0
     make -C "$ASE_WORK/toolchain-build" -j "$BUILD_JOBS" newlib
+    python3 "$ASE_REPO/ci/components.py" save toolchain
     ;;
 gem5-build)
+    if python3 "$ASE_REPO/ci/components.py" restore gem5; then exit 0; fi
+    # Modified in the personal fork on 2026-10-28: test FP register width before building the simulator.
+    python3 "$ASE_REPO/ci/fp-regression.py" "$sources/gem5"
+    # Modified in the personal fork on 2026-10-27: reject uninitialized O3 buffers before the full build.
+    "${CXX:-c++}" -std=c++17 -O3 -I"$sources/gem5/src" "$ASE_REPO/ci/timebuffer-regression.cc" \
+        -o "$ASE_WORK/timebuffer-regression"
+    "$ASE_WORK/timebuffer-regression"
     export PYTHON_CONFIG="$prefix/python/bin/python3.10-config"
     export PYTHONPATH="$ASE_WORK/scons"
-    options=()
+    # Modified in the personal fork on 2026-10-27: env-python3 generators must match PYTHONHOME.
+    export PATH="$prefix/python/bin:$PATH"
+    # Modified in the personal fork on 2026-10-27: supply the library search path
+    # omitted by CPython 3.10's macOS python-config (upstream issue 44182).
+    # SCons already forwards LIBRARY_PATH to its compiler/linker subprocesses.
+    export LIBRARY_PATH="$prefix/python/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+    if [[ "$ASE_FAMILY" == macos ]]; then
+        # CPython's link flags also reference Homebrew libraries such as libintl.
+        export LIBRARY_PATH="$LIBRARY_PATH:$brew_root/lib"
+    fi
+    "$PYTHON_CONFIG" --embed --ldflags --includes
+    ls -l "$prefix/python/lib"/libpython*
+    # A nonempty array also works with nounset in macOS's system Bash 3.2.
+    options=(build/RISCV/gem5.opt -j "$BUILD_JOBS")
     [[ "$GEM5_LINKER" == default ]] || options+=("--linker=$GEM5_LINKER")
     if [[ -n "${ASE_CACHE:-}" ]]; then
         # System package changes invalidate object reuse even with a fixed source lock.
         fingerprint=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$ASE_OUTPUT/packages.txt")
-        options+=("M5_BUILD_CACHE=$ASE_CACHE/$fingerprint")
+        options+=("M5_BUILD_CACHE=$ASE_CACHE/objects/$fingerprint")
     fi
     cd "$sources/gem5"
-    "$prefix/python/bin/python3.10" -m SCons build/RISCV/gem5.opt -j "$BUILD_JOBS" "${options[@]}"
+    if PYTHONHOME="$prefix/python" "$prefix/python/bin/python3.10" -m SCons "${options[@]}"; then
+        :
+    else
+        code=$?
+        # Preserve the actual configure/linker error, not just SCons's summary.
+        if [[ -f build/RISCV/gem5.build/scons_config.log ]]; then
+            cp build/RISCV/gem5.build/scons_config.log "$ASE_OUTPUT/gem5-scons-config.log"
+            echo "SCons configuration diagnostics saved to gem5-scons-config.log"
+        fi
+        exit "$code"
+    fi
+    python3 "$ASE_REPO/ci/components.py" save gem5
     ;;
-stage|smoke|sources|archive)
+stage|smoke|sources|archive|restore-sdk|refresh-sdk|refresh-sources)
+    # Modified in the personal fork on 2026-10-27: allow restoring a complete source-paired SDK.
+    # Modified in the personal fork on 2026-10-28: refresh packaging from verified unchanged vendor sources.
     python3 "$ASE_REPO/ci/package.py" "$1"
     ;;
 *) echo "Unknown phase: $1" >&2; exit 2 ;;

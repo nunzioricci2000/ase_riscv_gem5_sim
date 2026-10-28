@@ -549,10 +549,12 @@ def run_system_with_cpu(
     m5.instantiate(None)
     print("Beginning simulation!")
     m5.trace.enable()
-    exit_event = m5.simulate()
+    # Modified in the personal fork on 2026-10-27: enforce the tick limit and report the actual exit event.
+    exit_event = m5.simulate(max(0, max_tick - m5.curTick()))
     m5.stats.dump()
+    print("Exiting @ tick %i because %s" % (m5.curTick(), exit_event.getCause()))
     print("Ending simulation!")
-    return 0
+    return exit_event.getCode()
 
  
 

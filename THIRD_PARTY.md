@@ -3,6 +3,10 @@
 <!-- SPDX-License-Identifier: GPL-2.0-only -->
 <!-- Created in the personal fork on 2026-10-27: record licensing boundaries. -->
 <!-- Modified in the personal fork on 2026-10-27: document pinned engine build components. -->
+<!-- Modified in the personal fork on 2026-10-27: document embedded Python build environment patch. -->
+<!-- Modified in the personal fork on 2026-10-27: document TimeBuffer initialization fix. -->
+<!-- Modified in the personal fork on 2026-10-27: document DRAMPower C++17 compatibility and retained notices. -->
+<!-- Modified in the personal fork on 2026-10-28: document the host-independent FP register fix. -->
 
 - **ASE Studio** is a separate GPL-2.0-only repository at `ase_studio/`.
   Include its LICENSE and THIRD_PARTY.md and its exact pinned source revision.
@@ -26,9 +30,23 @@ See DISTRIBUTION.md before preparing a release.
 - gem5 `6169bf94dc3f24b05303d2b4dbfbe765c0a04ac0`: its BSD-style LICENSE and
   per-file/third-party notices remain in force. The protobuf link-flags patch
   preserves its upstream notice and is included in the source snapshot.
+  The SCons environment patch forwards PYTHONHOME and DYLD_LIBRARY_PATH to
+  embedded-Python probes and build helpers, preserving the original BSD notice.
   `utils/gem5-runtime.patch` fixes MinorCPU entry register state and syscall
   draining; it retains the target files’ BSD-style terms. Full ARM notices
   are reproduced in `utils/gem5-runtime.patch.license` and in the patched sources.
+  `utils/gem5-timebuffer.patch` explicitly initializes TimeBuffer slots so
+  optimizing compilers cannot discard their intended zero initialization.
+  It preserves the Michigan BSD-style notice, also reproduced in the adjacent
+  `.license` file. Both patches are supplied with the corresponding sources.
+  `utils/gem5-cxx17.patch` removes DRAMPower's obsolete `std::binary_function`
+  base while preserving the comparator and its public type aliases. Its original
+  BSD-3-Clause university notices are retained in the source and reproduced in
+  the adjacent `.license` file, which is also included in the binary SDK.
+  `utils/gem5-fpreg.patch` changes the raw floating-point register conversion
+  argument to `uint64_t`: macOS's `uint_fast16_t` otherwise truncates its bits.
+  The original ARM/RISC-V/other contributors' BSD-style notice is preserved in
+  the patched source and reproduced in the adjacent `.license` file.
 - RISC-V toolchain `33eb59addcd65b8fd71f69fb42ccd2ea31bcbaf1`: the wrapper's
   LICENSE is not a substitute for its submodules' licenses. GCC
   `6afcc4f6da931eb93f3ab001a0dd9650ea71d1ea` and binutils

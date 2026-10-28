@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: measured multi-platform builds.
+# Modified in the personal fork on 2026-10-27: expose failures and component reuse; compile gem5 first.
+# Modified in the personal fork on 2026-10-27: report actual gem5 compilation, linking and object cache retrievals.
+# Modified in the personal fork on 2026-10-27: delay large toolchain downloads until gem5 has built.
+# Modified in the personal fork on 2026-10-27: skip fetch/build/archive for an exact SDK/source pair and retest it.
+# Modified in the personal fork on 2026-10-27: keep compile errors separate from optional configure probes.
+# Modified in the personal fork on 2026-10-27: count shared-object compilation actions as well.
+# Modified in the personal fork on 2026-10-28: refresh packaging with verified unchanged vendor sources instead of fetching them again.
 """Build the engine SDK, preserving failure reports; never publish from this script."""
 import argparse
 from datetime import datetime, timezone
@@ -9,14 +16,15 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import signal
 import subprocess
 import sys
 import time
 
 ROOT = Path(__file__).resolve().parent.parent
-PHASES = ("dependencies", "environment", "fetch", "python-configure", "python-build",
-          "toolchain-configure", "toolchain-build", "gem5-build", "stage", "smoke",
+PHASES = ("dependencies", "environment", "reuse", "fetch", "python-configure", "python-build",
+          "gem5-build", "fetch-toolchain", "toolchain-configure", "toolchain-build", "stage", "smoke",
           "sources", "archive")
 
 
@@ -49,6 +57,28 @@ def targets(selection):
     if not requested or len(set(requested)) != len(requested) or set(requested) - known:
         raise ValueError("Unknown or duplicated target; use all, linux, or comma-separated target IDs")
     return [row for row in rows if row["id"] in requested]
+
+
+def gem5_work(log):
+    """Count emitted SCons actions; configure probes are deliberately excluded."""
+    result = dict(build_started=False, compile_actions=0, link_actions=0, cache_retrievals=0)
+    active = False
+    with log.open(errors="replace") as stream:
+        for line in stream:
+            if line.startswith("scons: Building targets"):
+                active = result["build_started"] = True
+                continue
+            if line.startswith(("scons: done building", "scons: building terminated")):
+                active = False
+            if not active:
+                continue
+            if line.startswith("Retrieved ") and " from cache" in line:
+                result["cache_retrievals"] += 1
+            action = re.match(r"\s*\[\s*(CC|CXX|AS|SHCC|SHCXX|SHAS|LINK|SHLINK)\s*\]", line)
+            if action:
+                key = "link_actions" if action[1] in ("LINK", "SHLINK") else "compile_actions"
+                result[key] += 1
+    return result
 
 
 class Recorder:
@@ -106,10 +136,32 @@ class Recorder:
             raise
         finally:
             stage.update(finished_at=utc(), wall_seconds=time.monotonic() - started)
+            if stage['status'] != 'succeeded' and (self.output / stage['log']).exists():
+                diagnostic = self.output / stage['log']
+                configuration = self.output / 'gem5-scons-config.log'
+                if name == 'gem5-build' and configuration.exists() and not gem5_work(diagnostic)['build_started']:
+                    diagnostic = configuration
+                with diagnostic.open('rb') as stream:
+                    stream.seek(max(0, diagnostic.stat().st_size - 4000))
+                    stage['diagnostic'] = stream.read().decode(errors='replace')
+                print(stage['diagnostic'], flush=True)
             self.save()
 
     def finish(self, status, error=None):
         self.report.update(status=status)
+        cache_events = self.output / 'component-cache.jsonl'
+        self.report['component_cache'] = [json.loads(line) for line in cache_events.read_text().splitlines()] if cache_events.exists() else []
+        keys = self.output / 'component-keys.json'
+        self.report['component_keys'] = json.loads(keys.read_text()) if keys.exists() else {}
+        bundle_key = self.output / 'bundle-key.txt'
+        self.report['bundle_key'] = bundle_key.read_text().strip() if bundle_key.exists() else None
+        reused = self.output / 'artifact-reuse.json'
+        if reused.exists():
+            self.report['artifact_reuse'] = json.loads(reused.read_text())
+        for stage in self.report['stages']:
+            log = self.output / stage['log']
+            if stage['name'] == 'gem5-build' and log.exists():
+                self.report['gem5_work'] = gem5_work(log)
         if error:
             self.report["error"] = str(error)
         self.report["artifacts"] = [dict(name=p.name, bytes=p.stat().st_size, sha256=digest(p))
@@ -123,6 +175,21 @@ class Recorder:
         for stage in self.report["stages"]:
             lines.append(f"| {stage['name']} | {stage['started_at']} | {stage['finished_at']} | "
                          f"{stage['wall_seconds']:.3f} | {stage['status']} |")
+        for stage in self.report['stages']:
+            if stage.get('diagnostic'):
+                lines += ['', f"Failure in {stage['name']} ({stage['log']}):", '', '```text',
+                          stage['diagnostic'].replace('```', "'''"), '```']
+        if self.report['component_cache']:
+            lines += ['', 'Component reuse:'] + [
+                f"- {e['component']}: {e['action']} {e['status']} ({e['seconds']:.2f}s)"
+                for e in self.report['component_cache']]
+        if self.report.get('gem5_work', {}).get('build_started'):
+            work = self.report['gem5_work']
+            lines += ['', f"gem5: {work['compile_actions']} compile actions, "
+                      f"{work['link_actions']} link actions, {work['cache_retrievals']} cached outputs retrieved."]
+        if self.report.get('skipped_phases'):
+            lines += ['', 'Verified SDK/source pair reused; skipped: ' + ', '.join(self.report['skipped_phases']),
+                      'Relocated runtime tests were executed again.']
         (self.output / "report.md").write_text("\n".join(lines) + "\n")
         (self.output / "SHA256SUMS").write_text("".join(
             f"{item['sha256']}  {item['name']}\n" for item in self.report["artifacts"]))
@@ -207,7 +274,24 @@ def main(argv=None):
                        ASE_CACHE=str(args.cache or ""))
             prefix = ["bash", str(ROOT / "ci/steps.sh")]
         for phase in PHASES:
-            rec.run(phase, prefix + [phase], env, args.stage_timeout)
+            if phase == 'reuse':
+                if args.cache:
+                    rec.run(phase, [sys.executable, str(ROOT / 'ci/reuse.py'), str(output),
+                                   str(work / 'reuse'), target['id'], str(args.cache)], env, args.stage_timeout)
+                    record = work / 'reuse/reuse.json'
+                    if record.exists() and json.loads(record.read_text()).get('whole_sdk'):
+                        rec.run('restore-sdk', prefix + ['restore-sdk'], env, args.stage_timeout)
+                        rec.run('smoke', prefix + ['smoke'], env, args.stage_timeout)
+                        rec.report['skipped_phases'] = [p for p in PHASES[PHASES.index('fetch'):] if p != 'smoke']
+                        break
+                    if record.exists() and json.loads(record.read_text()).get('refresh_sdk'):
+                        for refresh in ('refresh-sdk', 'smoke', 'refresh-sources', 'archive'):
+                            rec.run(refresh, prefix + [refresh], env, args.stage_timeout)
+                        rec.report['skipped_phases'] = [p for p in PHASES[PHASES.index('fetch'):]
+                                                        if p not in ('smoke', 'archive')]
+                        break
+            else:
+                rec.run(phase, prefix + [phase], env, args.stage_timeout)
         status = "succeeded"
     except subprocess.TimeoutExpired as exc:
         status, error = "timed_out", exc
