@@ -1,4 +1,5 @@
 <!-- SPDX-License-Identifier: GPL-2.0-only -->
+<!-- Modified in the personal fork on 2026-10-28: explain verified timezone-data compatibility and preservation of object caches. -->
 <!-- Created in the personal fork on 2026-10-27: measured binary distribution and Gitflow. -->
 <!-- Modified in the personal fork on 2026-10-27: use main/develop and original/ branch names. -->
 <!-- Modified in the personal fork on 2026-10-27: document automatic builds on main pushes. -->
@@ -11,6 +12,7 @@
 <!-- Modified in the personal fork on 2026-10-28: inspect legacy artifact reports without downloading irrelevant SDKs. -->
 <!-- Modified in the personal fork on 2026-10-28: use measured fast gzip for release archives. -->
 <!-- Modified in the personal fork on 2026-10-28: run automatic package matrices on main/tags and keep branch validation explicit. -->
+<!-- Modified in the personal fork on 2026-10-28: retry SDK transfers and preserve alternate candidates after temporary API failures. -->
 # Engine packages and Gitflow
 
 The build workflow produces **experimental engine SDKs**, not a cross-platform
@@ -61,6 +63,19 @@ the toolchain includes its multilib profile. An unchanged component is restored
 after verifying its archive checksum. Changed gem5 inputs fall back to SCons's
 dependency/object cache. Completed components are saved even if a later build
 stage fails. Cache eviction or a missing cache causes a normal source build.
+For Debian and Ubuntu, a change confined to the `tzdata` package can reuse an
+SDK built with the previous timezone database. The complete package inventories
+must otherwise match byte-for-byte, and each previous component key must be
+reproduced using the current sources, patches, recipes, compiler and build options.
+Only those proven components are relabeled with their current inventory keys;
+both original keys and inventory hashes remain in the report. The downloaded
+binary/source checksums are still verified and runtime tests rerun. The same
+proof permits moving an existing SCons object namespace to the current inventory
+fingerprint without changing its contents. Other package changes still invalidate
+reuse. Full package inventories, including `tzdata`, remain in all reports/SDKs.
+An actual object-namespace migration is saved once, so a subsequent changed-source
+build can restore those objects under the new fingerprint. A compatibility check
+without migrated objects does not create another duplicate cache upload.
 Every package still undergoes the relocated compile/simulation smoke tests.
 These compile/link RV32 and RV64 C programs and execute integer and floating-point
 assembly. MinorCPU and O3 are tested with direct and cached memory, including
@@ -94,6 +109,11 @@ or an exact complete package. A match for components already in cache is not
 sufficient. Servers without range support fall back to full archive verification.
 Missing/expired artifacts or failed downloads fall back to a source build; no extra cache
 storage allowance or billing setting is enabled.
+GitHub metadata and archive requests get at most three attempts, with short
+backoff and per-attempt timeouts of 60 and 600 seconds respectively. A failed
+index or SDK download does not discard other usable candidates. An unavailable
+ancestry lookup is not remembered as proof that a commit is unrelated; reuse
+still requires a successful ancestry check and verified component/archive hashes.
 `cache-storage.json` inventories bytes and file counts for component archives and
 SCons object namespaces. On Linux, completed toolchain/gem5 component archives
 also remove host ELF debug sections from temporary verified copies before cache

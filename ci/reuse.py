@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
+# Modified in the personal fork on 2026-10-28: prove tzdata-only compatibility without discarding compiled components or SCons objects.
 # Created in the personal fork on 2026-10-27: reuse verified SDKs independently of Actions cache eviction.
 # Modified in the personal fork on 2026-10-27: prefer complete SDK/source pairs and support older unindexed artifacts.
 # Modified in the personal fork on 2026-10-27: recover proven component identities from early cache reports.
 # Modified in the personal fork on 2026-10-28: inspect legacy reports with partial downloads and request only missing components.
 # Modified in the personal fork on 2026-10-28: refresh packaging from an existing source-paired SDK when every compiled component is unchanged.
+# Modified in the personal fork on 2026-10-28: retry bounded GitHub transfers and continue past unavailable candidate artifacts.
 """Recover verified components or a complete SDK; always test the resulting binaries."""
 import hashlib
+from contextlib import nullcontext
 import io
 import json
 import os
@@ -14,6 +17,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -21,8 +25,80 @@ import zipfile
 ANCESTORS = {}
 
 
-def api(route):
-    return subprocess.check_output(['gh', 'api', route])
+def build_packages(data, target):
+    """Only Debian-family timezone data is irrelevant to these compiled inputs."""
+    if target.startswith(('debian-', 'ubuntu-')):
+        return b''.join(line for line in data.splitlines(keepends=True)
+                        if not line.startswith(b'tzdata\t'))
+    return data
+
+
+def compatible_report(archive, output, target):
+    """Recompute old keys with current recipes; never trust package names alone."""
+    report = json.loads(archive.read('report.json'))
+    if (output is None or report.get('status') != 'succeeded'
+            or report.get('target', {}).get('id') != target
+            or 'packages.txt' not in archive.namelist()
+            or not (output / 'environment.json').is_file()):
+        return report
+    if archive.getinfo('packages.txt').file_size > 2 * 1024 * 1024:
+        raise ValueError('Package inventory is unexpectedly large')
+    previous = archive.read('packages.txt')
+    current = (output / 'packages.txt').read_bytes()
+    if previous == current or build_packages(previous, target) != build_packages(current, target):
+        return report
+    environment = json.loads((output / 'environment.json').read_text())
+    if not {'build_profile', 'gem5_linker'} <= environment.keys():
+        return report
+    from components import identity
+    env = dict(ASE_TARGET=target, ASE_PROFILE=environment['build_profile'],
+               GEM5_LINKER=environment['gem5_linker'])
+    repo = Path(__file__).resolve().parent.parent
+    previous_hash = hashlib.sha256(previous).hexdigest()
+    current_hash = hashlib.sha256(current).hexdigest()
+    keys = component_keys(report)
+    translated = dict(keys)
+    for component in ('python', 'toolchain', 'gem5'):
+        expected = identity(component, repo, output, env, packages_hash=previous_hash)
+        if keys.get(component) == expected:
+            translated[component] = identity(component, repo, output, env)
+    if translated == keys:
+        return report
+    return dict(report, component_keys=translated, original_component_keys=keys,
+                package_compatibility=dict(ignored_packages=['tzdata'],
+                                           previous_inventory_sha256=previous_hash,
+                                           current_inventory_sha256=current_hash))
+
+
+def migrate_object_cache(cache, record):
+    """Retain signed SCons objects when only the timezone database changed."""
+    compatibility = record.get('package_compatibility')
+    if not compatibility:
+        return
+    previous = cache / 'objects' / compatibility['previous_inventory_sha256']
+    current = cache / 'objects' / compatibility['current_inventory_sha256']
+    if previous.is_dir() and not current.exists():
+        previous.rename(current)
+        compatibility['object_cache_migrated'] = True
+        print('Retained SCons object namespace after verified tzdata-only change', flush=True)
+
+
+def api(route, destination=None):
+    """Retry transient transfer failures without accepting incomplete responses."""
+    for attempt in range(3):
+        try:
+            # Reopen with wb on every attempt: never append to a partial download.
+            with (destination.open('wb') if destination else nullcontext(subprocess.PIPE)) as stream:
+                result = subprocess.run(['gh', 'api', route], stdout=stream,
+                                        stderr=subprocess.PIPE, check=True,
+                                        timeout=600 if destination else 60)
+            return result.stdout
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            if attempt == 2:
+                raise
+            # Do not print redirect URLs or credentials from transport diagnostics.
+            print(f'GitHub request failed ({type(error).__name__}); retry {attempt + 2}/3', flush=True)
+            time.sleep(2 ** attempt)
 
 
 def component_keys(report):
@@ -94,7 +170,7 @@ class RangeReader(io.RawIOBase):
         return result
 
 
-def inspect_legacy(repo, artifact):
+def inspect_legacy(repo, artifact, output=None, target=None):
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *args, **kwargs):
             return None
@@ -136,7 +212,7 @@ def inspect_legacy(repo, artifact):
     with zipfile.ZipFile(reader) as archive:
         if archive.getinfo('report.json').file_size > 2 * 1024 * 1024:
             raise ValueError('Artifact report is unexpectedly large')
-        report = json.loads(archive.read('report.json'))
+        report = compatible_report(archive, output, target)
     print(f'Inspected legacy artifact {artifact["id"]}: {reader.downloaded + 1} downloaded bytes')
     return report
 
@@ -149,10 +225,10 @@ def checksum(path):
     return sha.hexdigest()
 
 
-def unpack_verified(download, destination, target, requested, bundle_key):
+def unpack_verified(download, destination, target, requested, bundle_key, output=None):
     """Trust the report inside the downloaded artifact, then verify actual bytes."""
     with zipfile.ZipFile(download) as archive:
-        report = json.loads(archive.read('report.json'))
+        report = compatible_report(archive, output, target)
         if not matching(report, requested, target):
             return None
         binary = f'ase-engine-{target}.tar.gz'
@@ -160,7 +236,7 @@ def unpack_verified(download, destination, target, requested, bundle_key):
         entries = {item['name']: item for item in report['artifacts']}
         if not {binary, sources} <= entries.keys() or not {binary, sources} <= set(archive.namelist()):
             raise ValueError('Previous SDK does not have its corresponding source archive')
-        whole = complete_match(report, requested, bundle_key)
+        whole = not report.get('package_compatibility') and complete_match(report, requested, bundle_key)
         refresh = not whole and component_keys(report) == requested
         selected = (binary, sources) if whole or refresh else (binary,)
         destination.mkdir(parents=True, exist_ok=True)
@@ -177,6 +253,8 @@ def unpack_verified(download, destination, target, requested, bundle_key):
         return dict(archive=binary, component_keys=component_keys(report),
                     sha256=entries[binary]['sha256'], whole_sdk=whole, refresh_sdk=refresh,
                     bundle_key=report.get('bundle_key'),
+                    **({name: report[name] for name in ('package_compatibility', 'original_component_keys')}
+                       if report.get('package_compatibility') else {}),
                     archives={name: entries[name] for name in selected})
 
 
@@ -199,22 +277,25 @@ def available(artifact, branch, repo=None):
             comparison = json.loads(api(f'repos/{repo}/compare/{head}...{current}'))
             ANCESTORS[key] = (comparison.get('status') in ('ahead', 'identical')
                               and comparison.get('merge_base_commit', {}).get('sha') == head)
-        except (ValueError, subprocess.CalledProcessError):
-            ANCESTORS[key] = False
+        except (ValueError, subprocess.SubprocessError):
+            # A failed lookup proves nothing about ancestry. Another candidate
+            # from this commit may succeed after the transient outage.
+            return False
     return ANCESTORS[key]
 
 
-def recover(repo, artifact, run_id, output, destination, target, requested, bundle_key):
+def recover(repo, artifact, run_id, output, destination, target, requested, bundle_key, cache=None):
     destination.mkdir(parents=True, exist_ok=True)
     download = destination / 'download.zip'
     try:
-        with download.open('wb') as stream:
-            subprocess.run(['gh', 'api', f'repos/{repo}/actions/artifacts/{artifact["id"]}/zip'], stdout=stream, check=True)
-        record = unpack_verified(download, destination, target, requested, bundle_key)
+        api(f'repos/{repo}/actions/artifacts/{artifact["id"]}/zip', download)
+        record = unpack_verified(download, destination, target, requested, bundle_key, output)
     finally:
         download.unlink(missing_ok=True)
     if record is None:
         return False
+    if cache is not None:
+        migrate_object_cache(cache, record)
     record.update(run_id=run_id, artifact_id=artifact['id'])
     (destination / 'reuse.json').write_text(json.dumps(record, indent=2))
     (output / 'artifact-reuse.json').write_text(json.dumps(record, indent=2))
@@ -239,24 +320,30 @@ def main():
     indices = json.loads(api(f'repos/{repo}/actions/artifacts?name=engine-index-{target}&per_page=100'))['artifacts']
     candidates = []
     for index in indices[:10]:
-        if not available(index, branch, repo):
-            continue
-        with zipfile.ZipFile(io.BytesIO(api(f'repos/{repo}/actions/artifacts/{index["id"]}/zip'))) as archive:
-            report = json.loads(archive.read('report.json'))
-        if not useful(report, requested, missing, bundle_key, target):
-            continue
-        whole = complete_match(report, requested, bundle_key)
-        refresh = component_keys(report) == requested
-        score = (whole, refresh, sum(component_keys(report).get(n) == k for n, k in missing.items()))
-        candidates.append((score, index['workflow_run']['id']))
+        try:
+            if not available(index, branch, repo):
+                continue
+            with zipfile.ZipFile(io.BytesIO(api(f'repos/{repo}/actions/artifacts/{index["id"]}/zip'))) as archive:
+                report = compatible_report(archive, output, target)
+            if not useful(report, requested, missing, bundle_key, target):
+                continue
+            whole = complete_match(report, requested, bundle_key)
+            refresh = component_keys(report) == requested
+            score = (whole, refresh, sum(component_keys(report).get(n) == k for n, k in missing.items()))
+            candidates.append((score, index['workflow_run']['id']))
+        except (OSError, ValueError, KeyError, zipfile.BadZipFile, subprocess.SubprocessError) as error:
+            print(f'Cannot inspect SDK index {index.get("id")}: {type(error).__name__}; trying other candidates')
     seen = set()
     for _, run_id in sorted(candidates, key=lambda c: c[0], reverse=True):
-        artifacts = json.loads(api(f'repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100'))['artifacts']
-        artifact = next((a for a in artifacts if a['name'] == f'engine-{target}' and not a['expired']), None)
-        if artifact:
-            seen.add(artifact['id'])
-            if recover(repo, artifact, run_id, output, destination, target, requested, bundle_key):
-                return
+        try:
+            artifacts = json.loads(api(f'repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100'))['artifacts']
+            artifact = next((a for a in artifacts if a['name'] == f'engine-{target}' and not a['expired']), None)
+            if artifact:
+                seen.add(artifact['id'])
+                if recover(repo, artifact, run_id, output, destination, target, requested, bundle_key, cache):
+                    return
+        except (OSError, ValueError, KeyError, zipfile.BadZipFile, subprocess.SubprocessError) as error:
+            print(f'Cannot recover SDK from run {run_id}: {type(error).__name__}; trying other candidates')
     if all_cached:
         print('No retained SDK with all matching components; use the restored component cache')
         return
@@ -266,19 +353,22 @@ def main():
     legacy = [a for a in legacy if a['id'] not in seen and available(a, branch, repo)]
     for artifact in legacy[:3]:
         try:
-            report = inspect_legacy(repo, artifact)
+            report = inspect_legacy(repo, artifact, output, target)
             if not useful(report, requested, missing, bundle_key, target):
                 continue
         except (OSError, ValueError, KeyError, zipfile.BadZipFile):
             print(f'Partial inspection unavailable for artifact {artifact["id"]}; checking the full archive')
-        if recover(repo, artifact, artifact['workflow_run']['id'], output, destination,
-                   target, requested, bundle_key):
-            return
+        try:
+            if recover(repo, artifact, artifact['workflow_run']['id'], output, destination,
+                       target, requested, bundle_key, cache):
+                return
+        except (OSError, ValueError, KeyError, zipfile.BadZipFile, subprocess.SubprocessError) as error:
+            print(f'Cannot recover legacy SDK {artifact.get("id")}: {type(error).__name__}; trying other candidates')
     print('No retained SDK has matching inputs; use object/component cache or build')
 
 
 if __name__ == '__main__':
     try:
         main()
-    except (OSError, ValueError, KeyError, zipfile.BadZipFile, subprocess.CalledProcessError) as error:
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile, subprocess.SubprocessError) as error:
         print(f'Previous SDK unavailable; building from verified sources instead: {error}', file=sys.stderr)
