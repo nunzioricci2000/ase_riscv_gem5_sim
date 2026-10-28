@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-28: inspect a previous Fedora SDK against changed system packages without changing production reuse rules.
+# Modified in the personal fork on 2026-10-28: distinguish a PAM runtime plugin from linker development inputs and check whether PAM is used.
 """Isolated diagnostic: verify old SDK bytes, package inputs and actual ELF closures."""
 import argparse
 import hashlib
@@ -118,11 +119,14 @@ def inspect(output, work):
         path = Path(path).resolve()
         build_tools[name] = dict(path=str(path), owners=owner(path),
                                 libraries=linked(path) if native_elf(path) else {})
-    development = {}
+    development, runtime_plugins = {}, {}
     for name in sorted(CHANGED):
         paths = capture('rpm', '-ql', name).splitlines()
         development[name] = [p for p in paths if '/include/' in p or
-                             p.endswith(('.h', '.hh', '.hpp', '.pc', '.a', '.la', '.so'))]
+                             p.endswith(('.h', '.hh', '.hpp', '.pc', '.a', '.la')) or
+                             (p.endswith('.so') and str(Path(p).parent) in
+                              ('/usr/lib64', '/usr/lib', '/lib64', '/lib'))]
+        runtime_plugins[name] = [p for p in paths if p.endswith('.so') and p not in development[name]]
     used = set()
     for libraries in sdk_links.values():
         used.update(p for providers in libraries.values() for p in providers)
@@ -130,8 +134,12 @@ def inspect(output, work):
         used.update(tool['owners'])
         used.update(p for providers in tool['libraries'].values() for p in providers)
     affected = sorted(CHANGED & used)
+    if 'pam' in used:
+        affected = sorted(set(affected) | {name for name, paths in runtime_plugins.items()
+                          if any('/security/pam_' in p for p in paths)})
     report = dict(changed_packages=sorted(CHANGED), native_sdk_files=len(sdk_links),
                   sdk_library_closures=sdk_links, build_tools=build_tools, missing_optional_tools=missing,
+                  runtime_plugins_in_changed_packages=runtime_plugins,
                   development_files_in_changed_packages=development, changed_packages_used=affected,
                   status='succeeded' if not affected and not any(development.values()) else 'failed')
     write(output / 'dependency-compatibility.json', report)
