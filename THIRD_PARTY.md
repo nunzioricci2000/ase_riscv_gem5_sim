@@ -6,6 +6,7 @@
 <!-- Modified in the personal fork on 2026-10-27: document embedded Python build environment patch. -->
 <!-- Modified in the personal fork on 2026-10-27: document TimeBuffer initialization fix. -->
 <!-- Modified in the personal fork on 2026-10-27: document DRAMPower C++17 compatibility and retained notices. -->
+<!-- Modified in the personal fork on 2026-10-28: document the host-independent FP register fix. -->
 
 - **ASE Studio** is a separate GPL-2.0-only repository at `ase_studio/`.
   Include its LICENSE and THIRD_PARTY.md and its exact pinned source revision.
@@ -42,6 +43,10 @@ See DISTRIBUTION.md before preparing a release.
   base while preserving the comparator and its public type aliases. Its original
   BSD-3-Clause university notices are retained in the source and reproduced in
   the adjacent `.license` file, which is also included in the binary SDK.
+  `utils/gem5-fpreg.patch` changes the raw floating-point register conversion
+  argument to `uint64_t`: macOS's `uint_fast16_t` otherwise truncates its bits.
+  The original ARM/RISC-V/other contributors' BSD-style notice is preserved in
+  the patched source and reproduced in the adjacent `.license` file.
 - RISC-V toolchain `33eb59addcd65b8fd71f69fb42ccd2ea31bcbaf1`: the wrapper's
   LICENSE is not a substitute for its submodules' licenses. GCC
   `6afcc4f6da931eb93f3ab001a0dd9650ea71d1ea` and binutils

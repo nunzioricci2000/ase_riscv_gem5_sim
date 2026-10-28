@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
+# Modified in the personal fork on 2026-10-28: include the full-width floating-point register patch and notices.
 # Created in the personal fork on 2026-10-27: apply runtime fixes without replacing local edits.
 # Modified in the personal fork on 2026-10-27: independently apply and preflight the TimeBuffer initialization fix.
 # Modified in the personal fork on 2026-10-27: include the C++17 DRAMPower comparator compatibility fix.
@@ -11,7 +12,7 @@ import sys
 
 def apply(source, patch=None):
     patches = [Path(patch)] if patch else [Path(__file__).with_name(name) for name in
-                                         ("gem5-runtime.patch", "gem5-timebuffer.patch", "gem5-cxx17.patch")]
+                                         ("gem5-runtime.patch", "gem5-timebuffer.patch", "gem5-cxx17.patch", "gem5-fpreg.patch")]
     command = ["git", "apply", "--whitespace=error"]
     def check(path, *args):
         return subprocess.run(command + list(args) + [str(path)], cwd=source,

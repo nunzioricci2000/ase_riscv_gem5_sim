@@ -1,0 +1,13 @@
+diff --git a/src/arch/riscv/regs/float.hh b/src/arch/riscv/regs/float.hh
+--- a/src/arch/riscv/regs/float.hh
++++ b/src/arch/riscv/regs/float.hh
+@@ -105,7 +105,8 @@
+ static constexpr freg_t freg(float16_t f) { return {boxF16(f.v)}; }
+ static constexpr freg_t freg(float32_t f) { return {boxF32(f.v)}; }
+ static constexpr freg_t freg(float64_t f) { return f; }
+-static constexpr freg_t freg(uint_fast16_t f) { return {f}; }
++// Modified in the personal fork on 2026-10-28: retain all register bits on hosts with 16-bit uint_fast16_t.
++static constexpr freg_t freg(uint64_t f) { return {f}; }
+ 
+ namespace float_reg
+ {

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
+# Modified in the personal fork on 2026-10-28: include the full-width floating-point register patch and notices.
 # Modified in the personal fork on 2026-10-27: apply the shared gem5 register and syscall fixes.
 # Modified in the personal fork on 2026-10-27: include shared patch tooling in rebuild sources.
 # Modified in the personal fork on 2026-10-27: test FP execution on Minor/O3 and ship TimeBuffer fix sources.
@@ -220,7 +221,7 @@ def main():
                         dest = bundle / "licenses" / component / relative
                         dest.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(src, dest)
-        for name in ("gem5-runtime.patch.license", "gem5-timebuffer.patch.license", "gem5-cxx17.patch.license"):
+        for name in ("gem5-runtime.patch.license", "gem5-timebuffer.patch.license", "gem5-cxx17.patch.license", "gem5-fpreg.patch.license"):
             destination = bundle / "licenses/gem5" / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(repo / "utils" / name, destination)
@@ -270,7 +271,8 @@ def main():
         extras += [(repo / 'utils' / name, f'project/utils/{name}') for name in
                    ('patch_gem5.py', 'gem5-runtime.patch', 'gem5-runtime.patch.license',
                     'gem5-timebuffer.patch', 'gem5-timebuffer.patch.license',
-                    'gem5-cxx17.patch', 'gem5-cxx17.patch.license')]
+                    'gem5-cxx17.patch', 'gem5-cxx17.patch.license',
+                    'gem5-fpreg.patch', 'gem5-fpreg.patch.license')]
         extras += [(p, f"build-tools/{p.name}") for p in (sources / "build-tools").iterdir()]
         source_archive(output / f"ase-engine-{target}-sources.tar.gz",
                        {name: sources / name for name in ("gem5", "python", "toolchain")}, extras)

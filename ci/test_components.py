@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
+# Modified in the personal fork on 2026-10-28: include the full-width floating-point register patch and notices.
 # Created in the personal fork on 2026-10-27: check cache invalidation, corruption and safe restoration.
 # Modified in the personal fork on 2026-10-27: include C++17 patch sources in the package identity fixture.
 # Modified in the personal fork on 2026-10-27: cover both independent gem5 runtime patches.
@@ -27,7 +28,8 @@ class ComponentTests(unittest.TestCase):
                      'THIRD_PARTY.md', 'DISTRIBUTION.md', 'RELEASES.md', 'utils/patch_gem5.py',
                      'utils/gem5-runtime.patch', 'utils/gem5-runtime.patch.license',
                      'utils/gem5-timebuffer.patch', 'utils/gem5-timebuffer.patch.license',
-                     'utils/gem5-cxx17.patch', 'utils/gem5-cxx17.patch.license']
+                     'utils/gem5-cxx17.patch', 'utils/gem5-cxx17.patch.license',
+                     'utils/gem5-fpreg.patch', 'utils/gem5-fpreg.patch.license']
             for name in names:
                 p = repo / name
                 p.parent.mkdir(parents=True, exist_ok=True)
@@ -129,14 +131,14 @@ class ComponentTests(unittest.TestCase):
             output.mkdir()
             shutil.copytree(ROOT / 'ci', repo / 'ci')
             (repo / 'utils').mkdir()
-            for name in ('patch_gem5.py', 'gem5-runtime.patch', 'gem5-timebuffer.patch', 'gem5-cxx17.patch'):
+            for name in ('patch_gem5.py', 'gem5-runtime.patch', 'gem5-timebuffer.patch', 'gem5-cxx17.patch', 'gem5-fpreg.patch'):
                 shutil.copy2(ROOT / 'utils' / name, repo / 'utils' / name)
             (output / 'packages.txt').write_text('compiler 1.0')
             (output / 'environment.json').write_text(json.dumps({'compiler': 'gcc 1.0'}))
             env = dict(ASE_TARGET='linux-x64', ASE_PROFILE='full', GEM5_LINKER='default')
             def keys():
                 return {c: components.identity(c, repo, output, env) for c in ('python', 'toolchain', 'gem5')}
-            for name in ('gem5-runtime.patch', 'gem5-timebuffer.patch', 'gem5-cxx17.patch'):
+            for name in ('gem5-runtime.patch', 'gem5-timebuffer.patch', 'gem5-cxx17.patch', 'gem5-fpreg.patch'):
                 before = keys()
                 (repo / 'utils' / name).write_text('different patch')
                 after = keys()

@@ -148,6 +148,8 @@ toolchain-build)
     ;;
 gem5-build)
     if python3 "$ASE_REPO/ci/components.py" restore gem5; then exit 0; fi
+    # Modified in the personal fork on 2026-10-28: test FP register width before building the simulator.
+    python3 "$ASE_REPO/ci/fp-regression.py" "$sources/gem5"
     # Modified in the personal fork on 2026-10-27: reject uninitialized O3 buffers before the full build.
     "${CXX:-c++}" -std=c++17 -O3 -I"$sources/gem5/src" "$ASE_REPO/ci/timebuffer-regression.cc" \
         -o "$ASE_WORK/timebuffer-regression"
