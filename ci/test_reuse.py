@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
+# Modified in the personal fork on 2026-10-28: reject false package compatibility and retain verified objects across tzdata updates.
 # Created in the personal fork on 2026-10-27: verify binary/source integrity and complete-versus-component reuse.
 # Modified in the personal fork on 2026-10-27: validate migration from early component-cache reports.
 # Modified in the personal fork on 2026-10-28: avoid irrelevant SDK downloads and exercise sparse ZIP report reads.
@@ -23,6 +24,101 @@ spec.loader.exec_module(reuse)
 
 
 class ReuseTests(unittest.TestCase):
+    def compatible_artifact(self, root, previous=b'gcc\t12\nlibc6\t2.36\ntzdata\t2026c\n',
+                            current=b'gcc\t12\nlibc6\t2.36\ntzdata\t2026e\n',
+                            changed_compiler=False, changed_gem5=False, corrupt=False):
+        from components import identity
+        target = 'debian-12-x86_64'
+        output = root / 'output'
+        output.mkdir()
+        environment = dict(compiler='gcc 12', cxx='c++ 12', build_profile='full', gem5_linker='default')
+        (output / 'environment.json').write_text(json.dumps(environment))
+        (output / 'packages.txt').write_bytes(previous)
+        env = dict(ASE_TARGET=target, ASE_PROFILE='full', GEM5_LINKER='default')
+        repo = Path(__file__).resolve().parent.parent
+        old_keys = {c: identity(c, repo, output, env) for c in ('python', 'toolchain', 'gem5')}
+        if changed_gem5:
+            old_keys['gem5'] = 'built-with-a-different-patch'
+        (output / 'packages.txt').write_bytes(current)
+        if changed_compiler:
+            environment['compiler'] = 'gcc 13'
+            (output / 'environment.json').write_text(json.dumps(environment))
+        requested = {c: identity(c, repo, output, env) for c in ('python', 'toolchain', 'gem5')}
+        files = {f'ase-engine-{target}.tar.gz': b'binary',
+                 f'ase-engine-{target}-sources.tar.gz': b'complete sources'}
+        report = dict(status='succeeded', target={'id': target}, component_keys=old_keys,
+                      bundle_key='old', artifacts=[dict(name=n, bytes=len(data),
+                      sha256=hashlib.sha256(data).hexdigest()) for n, data in files.items()])
+        path = root / 'download.zip'
+        with zipfile.ZipFile(path, 'w') as archive:
+            archive.writestr('report.json', json.dumps(report))
+            archive.writestr('packages.txt', previous)
+            for name, data in files.items():
+                archive.writestr(name, b'corrupt' if corrupt and '-sources' in name else data)
+        return path, output, target, requested, old_keys
+
+    def test_tzdata_update_reuses_only_recomputed_matching_components(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path, output, target, requested, previous = self.compatible_artifact(root)
+            record = reuse.unpack_verified(path, root / 'out', target, requested, 'old', output)
+            self.assertEqual(record['component_keys'], requested)
+            self.assertEqual(record['original_component_keys'], previous)
+            self.assertFalse(record['whole_sdk'])
+            self.assertTrue(record['refresh_sdk'])
+            self.assertEqual(record['package_compatibility']['ignored_packages'], ['tzdata'])
+            self.assertEqual(len(record['archives']), 2)
+
+    def test_tzdata_compatibility_does_not_hide_library_or_compiler_changes(self):
+        for options in ({'current': b'gcc\t12\nlibc6\t2.37\ntzdata\t2026e\n'},
+                        {'changed_compiler': True}):
+            with self.subTest(options=options), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                path, output, target, requested, _ = self.compatible_artifact(root, **options)
+                self.assertIsNone(reuse.unpack_verified(path, root / 'out', target, requested, 'new', output))
+                self.assertFalse((root / 'out').exists())
+
+    def test_tzdata_compatibility_still_rejects_a_changed_gem5_patch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path, output, target, requested, _ = self.compatible_artifact(root, changed_gem5=True)
+            record = reuse.unpack_verified(path, root / 'out', target, requested, 'new', output)
+            self.assertEqual(record['component_keys']['python'], requested['python'])
+            self.assertEqual(record['component_keys']['toolchain'], requested['toolchain'])
+            self.assertNotEqual(record['component_keys']['gem5'], requested['gem5'])
+            self.assertFalse(record['refresh_sdk'])
+            self.assertEqual(len(record['archives']), 1)
+
+    def test_tzdata_compatibility_does_not_accept_corrupt_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path, output, target, requested, _ = self.compatible_artifact(root, corrupt=True)
+            with self.assertRaisesRegex(ValueError, 'checksum'):
+                reuse.unpack_verified(path, root / 'out', target, requested, 'new', output)
+
+    def test_only_exact_debian_timezone_package_is_excluded(self):
+        data = b'tzdata\t2026e\ntzdata-dev\t1\ngcc\t12\n'
+        self.assertEqual(reuse.build_packages(data, 'debian-13-x86_64'), b'tzdata-dev\t1\ngcc\t12\n')
+        self.assertEqual(reuse.build_packages(data, 'arch-x86_64'), data)
+
+    def test_verified_object_namespace_moves_without_overwriting_new_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old, new = root / 'objects/old', root / 'objects/new'
+            old.mkdir(parents=True)
+            (old / 'object').write_bytes(b'compiled output')
+            record = dict(package_compatibility=dict(previous_inventory_sha256='old', current_inventory_sha256='new'))
+            reuse.migrate_object_cache(root, {})
+            self.assertTrue(old.exists())
+            reuse.migrate_object_cache(root, record)
+            self.assertFalse(old.exists())
+            self.assertEqual((new / 'object').read_bytes(), b'compiled output')
+            old.mkdir()
+            (old / 'object').write_bytes(b'older output')
+            reuse.migrate_object_cache(root, record)
+            self.assertEqual((new / 'object').read_bytes(), b'compiled output')
+            self.assertEqual((old / 'object').read_bytes(), b'older output')
+
     def test_metadata_transfer_recovers_after_transient_error(self):
         failure = subprocess.CalledProcessError(1, ['gh', 'api', 'route'])
         success = subprocess.CompletedProcess([], 0, stdout=b'{"valid":true}')

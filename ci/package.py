@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
+# Modified in the personal fork on 2026-10-28: retain build options with environment evidence for SDK compatibility checks.
 # Modified in the personal fork on 2026-10-28: include the full-width floating-point register patch and notices.
 # Modified in the personal fork on 2026-10-27: apply the shared gem5 register and syscall fixes.
 # Modified in the personal fork on 2026-10-27: include shared patch tooling in rebuild sources.
@@ -270,6 +271,7 @@ def main():
         finally:
             probe.unlink()
         data = dict(platform=platform.platform(), machine=actual, cpu_count=os.cpu_count(),
+                    build_profile=os.environ['ASE_PROFILE'], gem5_linker=os.environ['GEM5_LINKER'],
                     disk_free_bytes=shutil.disk_usage(work).free,
                     memory=Path("/proc/meminfo").read_text() if Path("/proc/meminfo").exists() else capture("sysctl", "hw.memsize"),
                     compiler=capture(os.getenv("CC", "cc"), "--version"),
