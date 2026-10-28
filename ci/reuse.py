@@ -79,6 +79,7 @@ def migrate_object_cache(cache, record):
     current = cache / 'objects' / compatibility['current_inventory_sha256']
     if previous.is_dir() and not current.exists():
         previous.rename(current)
+        compatibility['object_cache_migrated'] = True
         print('Retained SCons object namespace after verified tzdata-only change', flush=True)
 
 

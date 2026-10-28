@@ -73,6 +73,9 @@ binary/source checksums are still verified and runtime tests rerun. The same
 proof permits moving an existing SCons object namespace to the current inventory
 fingerprint without changing its contents. Other package changes still invalidate
 reuse. Full package inventories, including `tzdata`, remain in all reports/SDKs.
+An actual object-namespace migration is saved once, so a subsequent changed-source
+build can restore those objects under the new fingerprint. A compatibility check
+without migrated objects does not create another duplicate cache upload.
 Every package still undergoes the relocated compile/simulation smoke tests.
 These compile/link RV32 and RV64 C programs and execute integer and floating-point
 assembly. MinorCPU and O3 are tested with direct and cached memory, including

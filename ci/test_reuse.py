@@ -112,6 +112,7 @@ class ReuseTests(unittest.TestCase):
             self.assertTrue(old.exists())
             reuse.migrate_object_cache(root, record)
             self.assertFalse(old.exists())
+            self.assertTrue(record['package_compatibility']['object_cache_migrated'])
             self.assertEqual((new / 'object').read_bytes(), b'compiled output')
             old.mkdir()
             (old / 'object').write_bytes(b'older output')
