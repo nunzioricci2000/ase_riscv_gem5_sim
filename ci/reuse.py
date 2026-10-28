@@ -3,6 +3,7 @@
 # Created in the personal fork on 2026-10-27: reuse verified SDKs independently of Actions cache eviction.
 # Modified in the personal fork on 2026-10-27: prefer complete SDK/source pairs and support older unindexed artifacts.
 # Modified in the personal fork on 2026-10-27: recover proven component identities from early cache reports.
+# Modified in the personal fork on 2026-10-28: inspect legacy reports with partial downloads and request only missing components.
 """Recover verified components or a complete SDK; always test the resulting binaries."""
 import hashlib
 import io
@@ -12,6 +13,8 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 import zipfile
 
 ANCESTORS = {}
@@ -48,6 +51,93 @@ def matching(report, requested, target):
 def complete_match(report, requested, bundle_key):
     return (bool(bundle_key) and report.get('bundle_key') == bundle_key
             and component_keys(report) == requested)
+
+
+def useful(report, requested, missing, bundle_key, target):
+    return (matching(report, requested, target) and
+            (complete_match(report, requested, bundle_key) or matching(report, missing, target)))
+
+
+class RangeReader(io.RawIOBase):
+    """Seek within an artifact ZIP without downloading its multi-gigabyte SDK."""
+    def __init__(self, size, fetch):
+        self.size, self.fetch, self.position, self.downloaded = size, fetch, 0, 0
+
+    def seekable(self):
+        return True
+
+    def readable(self):
+        return True
+
+    def tell(self):
+        return self.position
+
+    def seek(self, offset, whence=0):
+        position = offset + (0 if whence == 0 else self.position if whence == 1 else self.size)
+        if position < 0:
+            raise ValueError('Negative artifact offset')
+        self.position = position
+        return position
+
+    def read(self, count=-1):
+        count = self.size - self.position if count < 0 else min(count, self.size - self.position)
+        if count <= 0:
+            return b''
+        if count > 2 * 1024 * 1024:
+            raise ValueError('Artifact report or ZIP index is unexpectedly large')
+        result = self.fetch(self.position, self.position + count - 1)
+        if len(result) != count:
+            raise ValueError('Incomplete artifact range')
+        self.position += len(result)
+        self.downloaded += len(result)
+        return result
+
+
+def inspect_legacy(repo, artifact):
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):
+            return None
+    request = urllib.request.Request(
+        f'https://api.github.com/repos/{repo}/actions/artifacts/{artifact["id"]}/zip',
+        headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                 'Accept': 'application/vnd.github+json'})
+    try:
+        with urllib.request.build_opener(NoRedirect).open(request, timeout=30):
+            raise ValueError('Artifact API did not redirect')
+    except urllib.error.HTTPError as response:
+        if response.code != 302:
+            raise ValueError(f'Artifact API returned HTTP {response.code}') from None
+        url = response.headers['Location']
+    if not url.startswith('https://'):
+        raise ValueError('Artifact download must use HTTPS')
+
+    def fetch(first, last):
+        # The GitHub token is never forwarded to the signed storage URL.
+        request = urllib.request.Request(url, headers={'Range': f'bytes={first}-{last}'})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            if response.status != 206:
+                raise ValueError('Artifact server does not support partial reads')
+            header = response.headers.get('Content-Range', '')
+            expected = f'bytes {first}-{last}/'
+            if not header.startswith(expected):
+                raise ValueError('Artifact server returned the wrong range')
+            data = response.read(last - first + 2)
+            if len(data) != last - first + 1:
+                raise ValueError('Artifact range length mismatch')
+            return data, int(header[len(expected):])
+    _, size = fetch(0, 0)
+    def span(first, last):
+        data, total = fetch(first, last)
+        if total != size:
+            raise ValueError('Artifact size changed during inspection')
+        return data
+    reader = RangeReader(size, span)
+    with zipfile.ZipFile(reader) as archive:
+        if archive.getinfo('report.json').file_size > 2 * 1024 * 1024:
+            raise ValueError('Artifact report is unexpectedly large')
+        report = json.loads(archive.read('report.json'))
+    print(f'Inspected legacy artifact {artifact["id"]}: {reader.downloaded + 1} downloaded bytes')
+    return report
 
 
 def checksum(path):
@@ -140,8 +230,9 @@ def main():
     requested = json.loads((output / 'component-keys.json').read_text())
     bundle_key = (output / 'bundle-key.txt').read_text().strip()
     cache = Path(sys.argv[4])
-    all_cached = all((cache / 'components' / name / key / 'manifest.json').is_file()
-                     for name, key in requested.items())
+    missing = {name: key for name, key in requested.items()
+               if not (cache / 'components' / name / key / 'manifest.json').is_file()}
+    all_cached = not missing
     branch = os.environ.get('GITHUB_REF_NAME')
     indices = json.loads(api(f'repos/{repo}/actions/artifacts?name=engine-index-{target}&per_page=100'))['artifacts']
     candidates = []
@@ -150,11 +241,11 @@ def main():
             continue
         with zipfile.ZipFile(io.BytesIO(api(f'repos/{repo}/actions/artifacts/{index["id"]}/zip'))) as archive:
             report = json.loads(archive.read('report.json'))
-        if not matching(report, requested, target):
+        if not useful(report, requested, missing, bundle_key, target):
             continue
         whole = complete_match(report, requested, bundle_key)
         if whole or not all_cached:
-            score = (whole, sum(component_keys(report).get(n) == k for n, k in requested.items()))
+            score = (whole, sum(component_keys(report).get(n) == k for n, k in missing.items()))
             candidates.append((score, index['workflow_run']['id']))
     seen = set()
     for _, run_id in sorted(candidates, key=lambda c: c[0], reverse=True):
@@ -168,10 +259,16 @@ def main():
         print('No identical complete SDK; all components are already in the restored cache')
         return
     # Transitional support for builds made before small indexes were introduced.
-    # Only three candidates are downloaded; mismatched inputs are never relabelled.
+    # Inspect metadata first; download only a source-paired SDK with useful inputs.
     legacy = json.loads(api(f'repos/{repo}/actions/artifacts?name=engine-{target}&per_page=100'))['artifacts']
     legacy = [a for a in legacy if a['id'] not in seen and available(a, branch, repo)]
     for artifact in legacy[:3]:
+        try:
+            report = inspect_legacy(repo, artifact)
+            if not useful(report, requested, missing, bundle_key, target):
+                continue
+        except (OSError, ValueError, KeyError, zipfile.BadZipFile):
+            print(f'Partial inspection unavailable for artifact {artifact["id"]}; checking the full archive')
         if recover(repo, artifact, artifact['workflow_run']['id'], output, destination,
                    target, requested, bundle_key):
             return

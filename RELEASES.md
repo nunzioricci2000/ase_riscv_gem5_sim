@@ -6,6 +6,9 @@
 <!-- Modified in the personal fork on 2026-10-27: default component reuse and document diagnostics. -->
 <!-- Modified in the personal fork on 2026-10-27: document runtime coverage and incremental build counters. -->
 <!-- Modified in the personal fork on 2026-10-27: document complete SDK reuse and promotion after merging. -->
+<!-- Modified in the personal fork on 2026-10-28: reduce Linux runtime archives by removing staged debug sections. -->
+<!-- Modified in the personal fork on 2026-10-28: inspect legacy artifact reports without downloading irrelevant SDKs. -->
+<!-- Modified in the personal fork on 2026-10-28: use measured fast gzip for release archives. -->
 # Engine packages and Gitflow
 
 The build workflow produces **experimental engine SDKs**, not a cross-platform
@@ -63,6 +66,18 @@ dependent FP operations, a store of 3.5 and final double-precision writeback of
 4.5 before exit. A short C++ regression also checks optimized TimeBuffer
 initialization before compiling gem5; it detects a startup crash exposed by
 newer optimizing compilers. Passing these checks is not exhaustive ISA validation.
+
+Before those tests, Linux packages remove debug sections from staged host ELF
+executables/shared libraries with `strip --strip-debug`. Dynamic exports and
+ordinary symbols remain; RISC-V target files, static archives and original cached
+build components are preserved. `runtime-compaction.json` records timestamps,
+per-file sizes and saved bytes. The exact sources and build recipes still ship
+alongside binaries; rebuild without this packaging step for full source-level
+debugging. macOS binaries are unchanged by this ELF-specific step.
+Runtime and source archives use gzip level 1. On the local runtime sample,
+level 1 took 8.3 seconds for 245 MB versus 126.1 seconds for 215 MB at level 9;
+the per-target remote reports remain the authoritative release measurements.
+
 Small `engine-index-TARGET` artifacts index successful SDKs for 14 days. When
 an Actions cache has been evicted, the workflow can download a matching SDK,
 verify its checksum and reuse only components with identical inputs. Lookup
@@ -71,6 +86,10 @@ repository that GitHub confirms are ancestors of the current commit. Thus a
 tested feature build can be reused after its merge into main. Fork PR artifacts
 are excluded. Up to three older artifacts without an index can also be checked;
 their embedded reports must contain matching component identities.
+For those older artifacts, HTTP range requests read only the ZIP index and small
+report first. A full SDK is downloaded only when it provides a missing component
+or an exact complete package. A match for components already in cache is not
+sufficient. Servers without range support fall back to full archive verification.
 Missing/expired artifacts or failed downloads fall back to a source build; no extra cache
 storage allowance or billing setting is enabled.
 When the entire package identity also matches (components, configuration files,

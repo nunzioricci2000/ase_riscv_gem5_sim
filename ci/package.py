@@ -5,6 +5,8 @@
 # Modified in the personal fork on 2026-10-27: test FP execution on Minor/O3 and ship TimeBuffer fix sources.
 # Modified in the personal fork on 2026-10-27: restore and retest exact SDK/source pairs without rebuilding.
 # Modified in the personal fork on 2026-10-27: distribute the DRAMPower comparator patch and BSD notices.
+# Modified in the personal fork on 2026-10-28: compact staged host ELF files before relocation/runtime checks.
+# Modified in the personal fork on 2026-10-28: use fast gzip for runtime/source archives after measuring compression tradeoffs.
 # Created in the personal fork on 2026-10-27: source-complete engine SDK packaging.
 """Called inside the target build environment by steps.sh."""
 import json
@@ -51,7 +53,7 @@ def source_archive(path, repositories, extras):
         if ".git" in Path(member.name).parts or "__pycache__" in Path(member.name).parts or member.name.endswith(".pyc"):
             return None
         return member
-    with tarfile.open(temporary, "w:gz") as archive:
+    with tarfile.open(temporary, "w:gz", compresslevel=1) as archive:
         for name, repo in repositories.items():
             for relative in tracked_files(repo):
                 archive.add(repo / relative, arcname=f"sources/{name}/{relative}", recursive=False)
@@ -199,6 +201,8 @@ def main():
         (bundle / "bin").mkdir()
         shutil.copy2(repo / "ci/gem5-launcher.sh", bundle / "bin/gem5")
         (bundle / "bin/gem5").chmod(0o755)
+        from compact import compact_runtime
+        compact_runtime(bundle, output / 'runtime-compaction.json')
         (bundle / "tests").mkdir()
         shutil.copy2(repo / "ci/smoke.s", bundle / "tests/smoke.s")
         shutil.copy2(repo / "ci/smoke-fp.s", bundle / "tests/smoke-fp.s")
@@ -222,11 +226,13 @@ def main():
             shutil.copy2(repo / "utils" / name, destination)
         manifest = dict(target=target, sources=json.loads((repo / "ci/sources.lock.json").read_text()),
                         profile=os.environ["ASE_PROFILE"], jobs=int(os.environ["BUILD_JOBS"]),
-                        linker=os.environ["GEM5_LINKER"], gui_included=False,
+                        linker=os.environ["GEM5_LINKER"], gui_included=False, archive_compression='gzip level 1',
                         runtime_dependencies="System libraries listed in packages.txt and runtime-links.txt",
                         source_archive=f"ase-engine-{target}-sources.tar.gz")
         (bundle / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         (bundle / "manifest.json.license").write_text("SPDX-License-Identifier: GPL-2.0-only\n")
+        shutil.copy2(output / 'runtime-compaction.json', bundle / 'runtime-compaction.json')
+        (bundle / 'runtime-compaction.json.license').write_text('SPDX-License-Identifier: GPL-2.0-only\n')
         (bundle / "README.txt").write_text(
             "ASE engine SDK — personal fork, experimental until tested on your platform.\n"
             "This contains gem5.opt, a bare-metal RV32/RV64 toolchain and Python 3.10.\n"
@@ -274,7 +280,7 @@ def main():
         (output / "source-revisions.json").write_text(json.dumps(revisions, indent=2) + "\n")
     elif phase == "archive":
         temporary = output / f"ase-engine-{target}.tar.partial"
-        with tarfile.open(temporary, "w:gz") as archive:
+        with tarfile.open(temporary, "w:gz", compresslevel=1) as archive:
             archive.add(bundle, arcname=bundle.name)
         temporary.replace(output / f"ase-engine-{target}.tar.gz")
     else:

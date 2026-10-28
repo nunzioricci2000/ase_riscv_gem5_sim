@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: verify binary/source integrity and complete-versus-component reuse.
 # Modified in the personal fork on 2026-10-27: validate migration from early component-cache reports.
+# Modified in the personal fork on 2026-10-28: avoid irrelevant SDK downloads and exercise sparse ZIP report reads.
 import hashlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -17,6 +19,27 @@ spec.loader.exec_module(reuse)
 
 
 class ReuseTests(unittest.TestCase):
+    def test_sparse_zip_lookup_skips_the_binary_payload(self):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, 'w') as archive:
+            archive.writestr('sdk.tar.gz', b'x' * (4 * 1024 * 1024))
+            archive.writestr('report.json', '{"status":"succeeded"}')
+        content = stream.getvalue()
+        reader = reuse.RangeReader(len(content), lambda first, last: content[first:last + 1])
+        with zipfile.ZipFile(reader) as archive:
+            self.assertEqual(json.loads(archive.read('report.json')), {'status': 'succeeded'})
+        self.assertLess(reader.downloaded, 4096)
+
+    def test_unchanged_cached_components_do_not_justify_downloading_an_old_sdk(self):
+        requested = {'gem5': 'new-gem5', 'python': 'same-python'}
+        old = dict(status='succeeded', target={'id': 'test'},
+                   component_keys={'gem5': 'old-gem5', 'python': 'same-python'}, bundle_key='old')
+        self.assertFalse(reuse.useful(old, requested, {'gem5': 'new-gem5'}, 'new', 'test'))
+        self.assertTrue(reuse.useful(old, requested, {'python': 'same-python'}, 'new', 'test'))
+        exact = dict(old, component_keys=requested, bundle_key='new')
+        self.assertTrue(reuse.useful(exact, requested, {}, 'new', 'test'))
+        self.assertFalse(reuse.useful(dict(exact, status='failed'), requested, {}, 'new', 'test'))
+
     def artifact(self, root, bundle_key='same', corrupt=False, omit_sources=False, target='test', events=None):
         files = {'ase-engine-test.tar.gz': b'binary', 'ase-engine-test-sources.tar.gz': b'complete sources'}
         report = dict(status='succeeded', target={'id': target}, component_keys={'gem5': 'g', 'python': 'p'},
