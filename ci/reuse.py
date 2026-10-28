@@ -5,8 +5,10 @@
 # Modified in the personal fork on 2026-10-27: recover proven component identities from early cache reports.
 # Modified in the personal fork on 2026-10-28: inspect legacy reports with partial downloads and request only missing components.
 # Modified in the personal fork on 2026-10-28: refresh packaging from an existing source-paired SDK when every compiled component is unchanged.
+# Modified in the personal fork on 2026-10-28: retry bounded GitHub transfers and continue past unavailable candidate artifacts.
 """Recover verified components or a complete SDK; always test the resulting binaries."""
 import hashlib
+from contextlib import nullcontext
 import io
 import json
 import os
@@ -14,6 +16,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -21,8 +24,22 @@ import zipfile
 ANCESTORS = {}
 
 
-def api(route):
-    return subprocess.check_output(['gh', 'api', route])
+def api(route, destination=None):
+    """Retry transient transfer failures without accepting incomplete responses."""
+    for attempt in range(3):
+        try:
+            # Reopen with wb on every attempt: never append to a partial download.
+            with (destination.open('wb') if destination else nullcontext(subprocess.PIPE)) as stream:
+                result = subprocess.run(['gh', 'api', route], stdout=stream,
+                                        stderr=subprocess.PIPE, check=True,
+                                        timeout=600 if destination else 60)
+            return result.stdout
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            if attempt == 2:
+                raise
+            # Do not print redirect URLs or credentials from transport diagnostics.
+            print(f'GitHub request failed ({type(error).__name__}); retry {attempt + 2}/3', flush=True)
+            time.sleep(2 ** attempt)
 
 
 def component_keys(report):
@@ -199,8 +216,10 @@ def available(artifact, branch, repo=None):
             comparison = json.loads(api(f'repos/{repo}/compare/{head}...{current}'))
             ANCESTORS[key] = (comparison.get('status') in ('ahead', 'identical')
                               and comparison.get('merge_base_commit', {}).get('sha') == head)
-        except (ValueError, subprocess.CalledProcessError):
-            ANCESTORS[key] = False
+        except (ValueError, subprocess.SubprocessError):
+            # A failed lookup proves nothing about ancestry. Another candidate
+            # from this commit may succeed after the transient outage.
+            return False
     return ANCESTORS[key]
 
 
@@ -208,8 +227,7 @@ def recover(repo, artifact, run_id, output, destination, target, requested, bund
     destination.mkdir(parents=True, exist_ok=True)
     download = destination / 'download.zip'
     try:
-        with download.open('wb') as stream:
-            subprocess.run(['gh', 'api', f'repos/{repo}/actions/artifacts/{artifact["id"]}/zip'], stdout=stream, check=True)
+        api(f'repos/{repo}/actions/artifacts/{artifact["id"]}/zip', download)
         record = unpack_verified(download, destination, target, requested, bundle_key)
     finally:
         download.unlink(missing_ok=True)
@@ -239,24 +257,30 @@ def main():
     indices = json.loads(api(f'repos/{repo}/actions/artifacts?name=engine-index-{target}&per_page=100'))['artifacts']
     candidates = []
     for index in indices[:10]:
-        if not available(index, branch, repo):
-            continue
-        with zipfile.ZipFile(io.BytesIO(api(f'repos/{repo}/actions/artifacts/{index["id"]}/zip'))) as archive:
-            report = json.loads(archive.read('report.json'))
-        if not useful(report, requested, missing, bundle_key, target):
-            continue
-        whole = complete_match(report, requested, bundle_key)
-        refresh = component_keys(report) == requested
-        score = (whole, refresh, sum(component_keys(report).get(n) == k for n, k in missing.items()))
-        candidates.append((score, index['workflow_run']['id']))
+        try:
+            if not available(index, branch, repo):
+                continue
+            with zipfile.ZipFile(io.BytesIO(api(f'repos/{repo}/actions/artifacts/{index["id"]}/zip'))) as archive:
+                report = json.loads(archive.read('report.json'))
+            if not useful(report, requested, missing, bundle_key, target):
+                continue
+            whole = complete_match(report, requested, bundle_key)
+            refresh = component_keys(report) == requested
+            score = (whole, refresh, sum(component_keys(report).get(n) == k for n, k in missing.items()))
+            candidates.append((score, index['workflow_run']['id']))
+        except (OSError, ValueError, KeyError, zipfile.BadZipFile, subprocess.SubprocessError) as error:
+            print(f'Cannot inspect SDK index {index.get("id")}: {type(error).__name__}; trying other candidates')
     seen = set()
     for _, run_id in sorted(candidates, key=lambda c: c[0], reverse=True):
-        artifacts = json.loads(api(f'repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100'))['artifacts']
-        artifact = next((a for a in artifacts if a['name'] == f'engine-{target}' and not a['expired']), None)
-        if artifact:
-            seen.add(artifact['id'])
-            if recover(repo, artifact, run_id, output, destination, target, requested, bundle_key):
-                return
+        try:
+            artifacts = json.loads(api(f'repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100'))['artifacts']
+            artifact = next((a for a in artifacts if a['name'] == f'engine-{target}' and not a['expired']), None)
+            if artifact:
+                seen.add(artifact['id'])
+                if recover(repo, artifact, run_id, output, destination, target, requested, bundle_key):
+                    return
+        except (OSError, ValueError, KeyError, zipfile.BadZipFile, subprocess.SubprocessError) as error:
+            print(f'Cannot recover SDK from run {run_id}: {type(error).__name__}; trying other candidates')
     if all_cached:
         print('No retained SDK with all matching components; use the restored component cache')
         return
@@ -271,14 +295,17 @@ def main():
                 continue
         except (OSError, ValueError, KeyError, zipfile.BadZipFile):
             print(f'Partial inspection unavailable for artifact {artifact["id"]}; checking the full archive')
-        if recover(repo, artifact, artifact['workflow_run']['id'], output, destination,
-                   target, requested, bundle_key):
-            return
+        try:
+            if recover(repo, artifact, artifact['workflow_run']['id'], output, destination,
+                       target, requested, bundle_key):
+                return
+        except (OSError, ValueError, KeyError, zipfile.BadZipFile, subprocess.SubprocessError) as error:
+            print(f'Cannot recover legacy SDK {artifact.get("id")}: {type(error).__name__}; trying other candidates')
     print('No retained SDK has matching inputs; use object/component cache or build')
 
 
 if __name__ == '__main__':
     try:
         main()
-    except (OSError, ValueError, KeyError, zipfile.BadZipFile, subprocess.CalledProcessError) as error:
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile, subprocess.SubprocessError) as error:
         print(f'Previous SDK unavailable; building from verified sources instead: {error}', file=sys.stderr)

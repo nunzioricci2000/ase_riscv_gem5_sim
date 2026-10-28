@@ -11,6 +11,7 @@
 <!-- Modified in the personal fork on 2026-10-28: inspect legacy artifact reports without downloading irrelevant SDKs. -->
 <!-- Modified in the personal fork on 2026-10-28: use measured fast gzip for release archives. -->
 <!-- Modified in the personal fork on 2026-10-28: run automatic package matrices on main/tags and keep branch validation explicit. -->
+<!-- Modified in the personal fork on 2026-10-28: retry SDK transfers and preserve alternate candidates after temporary API failures. -->
 # Engine packages and Gitflow
 
 The build workflow produces **experimental engine SDKs**, not a cross-platform
@@ -94,6 +95,11 @@ or an exact complete package. A match for components already in cache is not
 sufficient. Servers without range support fall back to full archive verification.
 Missing/expired artifacts or failed downloads fall back to a source build; no extra cache
 storage allowance or billing setting is enabled.
+GitHub metadata and archive requests get at most three attempts, with short
+backoff and per-attempt timeouts of 60 and 600 seconds respectively. A failed
+index or SDK download does not discard other usable candidates. An unavailable
+ancestry lookup is not remembered as proof that a commit is unrelated; reuse
+still requires a successful ancestry check and verified component/archive hashes.
 `cache-storage.json` inventories bytes and file counts for component archives and
 SCons object namespaces. On Linux, completed toolchain/gem5 component archives
 also remove host ELF debug sections from temporary verified copies before cache
