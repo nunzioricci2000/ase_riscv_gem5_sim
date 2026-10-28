@@ -131,6 +131,12 @@ a new source archive, replacing the complete project/build-recipe subtree with
 the current files. No vendor checkout or compilation occurs in this path. A
 change to any compiled component prevents this shortcut. The report distinguishes
 `refresh-sdk` and `refresh-sources` from exact SDK reuse and ordinary compilation.
+In run 40622804878 this path passed all runtime checks on Arch and macOS Apple
+Silicon. Measured package work took 166 and 217 seconds respectively, with no
+compilation. The immediately preceding macOS packaging run took 1,053 seconds
+despite restoring all compiled components; its source checkout/archive phases
+accounted for most of that time. These runner/network measurements establish the
+benefit for that comparison rather than a guaranteed duration.
 Disable cache for a source-build timing experiment.
 The full profile is the default. Minimal omits GDB and restricts
 multilib to RV32IMAC/ILP32 and RV64GC/LP64D; both preserve the assembly/runtime
