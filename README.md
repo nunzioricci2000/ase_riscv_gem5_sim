@@ -1,6 +1,7 @@
 <!-- Modified in the personal fork on 2026-10-27: clarify licensing and redistribution requirements. -->
 <!-- Modified in the personal fork on 2026-10-27: link measured binary build and Gitflow workflow. -->
 <!-- Modified in the personal fork on 2026-10-27: reserve main/develop for the personal fork. -->
+<!-- Modified in the personal fork on 2026-10-28: distinguish downloadable desktop applications from engine-only SDK packages. -->
 # Architetture dei Sistemi di Elaborazione@Politecnico di Torino: SIMULATING A RISC-V CPU WITH GEM5
 
 This README provides an environment for simulating a program on a parametrizable RISC-V CPU and visualize the pipeline. You can see the flow in the Figure below.
@@ -53,10 +54,19 @@ This copies `setup_default.labinf` to `setup_default`, verifies the shared compi
 
 ### Installation 
 
-Experimental precompiled engine packages, the platform matrix, timestamped
-build reports and the fork's Gitflow release process are described in
-[RELEASES.md](RELEASES.md). These packages contain gem5 and the RISC-V toolchain;
-ASE Studio's desktop frontend remains a separate installation.
+For a ready-to-run desktop application, download the matching package from
+[ASE Studio di Nunzio Releases](https://github.com/nunzioricci2000/ase-studio/releases).
+Those packages include Studio, gem5, Python and the RISC-V toolchain; the release
+notes explain the prebuilt system runtime dependencies. No engine compilation is
+needed on first launch. Linux and macOS packages have separate target builds;
+Windows uses the Ubuntu package inside WSL2/WSLg.
+
+Engine-only SDKs are published separately in
+[this repository's Releases](https://github.com/nunzioricci2000/ase_riscv_gem5_sim/releases).
+They contain gem5 and its compiler/runtime dependencies, without the Studio GUI.
+The platform matrix, timestamped reports, cache behavior and Gitflow release
+process are documented in [RELEASES.md](RELEASES.md). Download the application or
+SDK archive to run it; `*-sources.tar.gz` archives contain editable sources.
 
 In the repository, you can find a script named [```installation.sh```](./utils/installation.sh) (in the utils folder) that can help you to download the cross-compiler, the gem5 simulator and generate the ```setup_default``` file. You can run it with the following command:
 
