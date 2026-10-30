@@ -153,14 +153,24 @@ def main():
         if old:
             print('This proposal was already submitted; preserving the previous review decision.')
             return
-        git(repo, 'branch', '-m', branch)
-        body, blocked = prepare(repo, args.upstream, tips)
+        # Recover a push that succeeded before a transient PR-creation failure.
+        existing = git(repo, 'ls-remote', '--heads', 'origin', 'refs/heads/' + branch).stdout.strip()
+        if existing:
+            git(repo, 'fetch', '--no-tags', 'origin', 'refs/heads/' + branch)
+            body = git(repo, 'show', 'FETCH_HEAD:' + REPORT).stdout
+            if not all(tip in body for tip in tips):
+                raise RuntimeError('Existing proposal branch has unexpected provenance; preserving it')
+            blocked = 'Integration: BLOCKED' in body
+        else:
+            git(repo, 'branch', '-m', branch)
+            body, blocked = prepare(repo, args.upstream, tips)
         if args.dry_run:
             print(body)
             return
         # Credentials are used only for the push, never to execute incoming project code.
-        git(repo, '-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential',
-            'push', 'origin', f'HEAD:refs/heads/{branch}')
+        if not existing:
+            git(repo, '-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential',
+                'push', 'origin', f'HEAD:refs/heads/{branch}')
         pr = api(f'repos/{args.fork}/pulls', {'base': args.base, 'head': branch, 'draft': True,
                  'title': ('Resolve upstream integration conflicts' if blocked else 'Integrate upstream updates') + ' (' + tips[0][:7] + ')',
                  'body': body})
