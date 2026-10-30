@@ -13,7 +13,15 @@
 <!-- Modified in the personal fork on 2026-10-28: use measured fast gzip for release archives. -->
 <!-- Modified in the personal fork on 2026-10-28: run automatic package matrices on main/tags and keep branch validation explicit. -->
 <!-- Modified in the personal fork on 2026-10-28: retry SDK transfers and preserve alternate candidates after temporary API failures. -->
+<!-- Modified in the personal fork on 2026-10-30: link upstream usage and distinguish engine tags from Studio's Abate identity. -->
 # Engine packages and Gitflow
+
+This is documentation of the personal fork's SDK build/release system. For the
+unchanged simulation workflow use the [original documentation](https://github.com/cad-polito-it/ase_riscv_gem5_sim#readme);
+for local modifications see [FORK.md](FORK.md). Studio's **Abate** feature-package
+name belongs to its independent app release; existing engine SDK tags and pinned
+source revisions are not renamed by that convention.
+
 
 The build workflow produces **experimental engine SDKs**, not a cross-platform
 ASE Studio desktop application. Each SDK contains this fork's RISCV `gem5.opt`,
