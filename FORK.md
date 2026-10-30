@@ -155,7 +155,7 @@ the Studio GUI; the [Studio packages](https://github.com/nunzioricci2000/ase-stu
 combine both components. Caches, manifests, reports and source rebuilds are
 explained in [RELEASES.md](RELEASES.md).
 
-The Studio feature package is **Abate**, based on original Studio **1.6.0**.
+The Studio feature package is **Abate**, based on original Studio **1.6.2**.
 Its [version naming](https://github.com/nunzioricci2000/ase-studio/blob/main/VERSIONING.md)
 is independent of engine SDK tags and of this repository's submodule pointer.
 

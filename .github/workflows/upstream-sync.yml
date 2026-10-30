@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Created in the personal fork on 2026-10-30: propose original-project updates on a six-hour schedule.
+name: Propose upstream integration
+on:
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+concurrency:
+  group: upstream-integration
+  cancel-in-progress: false
+jobs:
+  propose:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Prepare a draft without executing incoming code
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 ci/upstream_sync.py --upstream cad-polito-it/ase_riscv_gem5_sim --fork nunzioricci2000/ase_riscv_gem5_sim

@@ -55,3 +55,5 @@ without warranty; see [LICENSE](LICENSE).
 See [distribution requirements](DISTRIBUTION.md), [third-party components](THIRD_PARTY.md)
 and [contributor instructions](AGENTS.md). Keep all required license notices
 and provide corresponding source when distributing built artifacts.
+
+[Scheduled upstream integration proposals](UPSTREAM_SYNC.md).
