@@ -1,4 +1,5 @@
 <!-- SPDX-License-Identifier: GPL-2.0-only -->
+<!-- Modified in the personal fork on 2026-10-30: explain explicit CI dispatch for token-created proposals. -->
 <!-- Created in the personal fork on 2026-10-30: document scheduled upstream proposals and their review boundary. -->
 # Upstream integration proposals
 
@@ -30,10 +31,12 @@ do not claim that an automatic agent has adapted conflicted functionality.
 
 Enable **Allow GitHub Actions to create and approve pull requests** in repository
 Actions settings. The workflow requests only contents and pull-request write access;
-it never approves or merges a PR. Its GITHUB_TOKEN-created PR checks can require
-**Approve workflows to run**, according to GitHub's token event rules. No personal
-access token is stored and no privileged pull_request_target workflow executes the
-incoming code. Normal PR tests run with read permissions and without signing secrets.
+it never approves or merges a PR. Events created with GITHUB_TOKEN do not trigger
+ordinary push/PR workflows. After reviewing the proposal, dispatch `ci.yml` manually
+on its branch, or close and reopen the PR from your own account to trigger PR checks.
+Do not treat an absent check as a passing check. No personal access token is stored
+and no privileged pull_request_target workflow executes incoming code. Normal tests
+run with read permissions and without signing secrets.
 
 Merging upstream proposals does not itself publish a release. Follow the existing
 Gitflow release process, package verification and signing gates. Publish a tested
