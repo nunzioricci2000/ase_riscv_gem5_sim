@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Created in the personal fork on 2026-10-27: Gitflow checks preserving upstream main.
 # Modified in the personal fork on 2026-10-27: use main/develop for personal branches.
+from pathlib import Path
+# Modified in the personal fork on 2026-10-30: block incomplete automated upstream proposals.
 import argparse
 import os
 import re
@@ -25,6 +27,9 @@ def main():
     parser.add_argument("--tag", default=os.getenv("GITHUB_REF_NAME", ""))
     args = parser.parse_args()
     if args.command == "check":
+        report = Path('UPSTREAM_INTEGRATION.md')
+        if report.exists() and 'Integration: BLOCKED' in report.read_text():
+            raise SystemExit('Upstream integration remains incomplete; resolve the actual merge before continuing')
         if os.getenv("GITHUB_EVENT_NAME") == "pull_request":
             base, head = os.environ["GITHUB_BASE_REF"], os.environ["GITHUB_HEAD_REF"]
             if not allowed_pull_request(base, head):
