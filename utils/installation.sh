@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Modified in the personal fork on 2026-10-30: integrate upstream Pop!_OS detection as Ubuntu.
 set -euo pipefail
 
 WORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -79,7 +80,7 @@ detect_distribution() {
         exit 1
     fi
     case "${DISTRO,,}" in
-        ubuntu) DISTRO="Ubuntu" ;;
+        ubuntu|pop) DISTRO="Ubuntu" ;;
         fedora) DISTRO="Fedora" ;;
         arch|manjarolinux|manjaro) DISTRO="Arch" ;;
         *)

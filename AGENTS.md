@@ -35,3 +35,18 @@ ASE Studio è un repository autonomo: rispettare anche il suo AGENTS.md.
   modifica; non dichiarare una verifica completa se restano elementi incerti.
 - Non riscrivere la storia né effettuare commit, push o pubblicazioni solo per
   applicare queste regole. Conservare le modifiche dell'utente già presenti.
+
+<!-- Modified in the personal fork on 2026-10-30: document only fork additions and link upstream for unchanged behavior. -->
+
+## Documentazione del fork
+
+- La documentazione locale spiega le aggiunte e le modifiche del fork. Per uso,
+  funzionalità e procedure rimaste originali, linkare la documentazione upstream
+  invece di copiarla; distinguere le funzionalità ereditate da quelle introdotte qui.
+- Conservare attribuzioni, copyright, licenze e avvisi di garanzia anche quando
+  si riduce o riorganizza la documentazione originale.
+- Nel README di ASE Studio il primo contenuto visibile è il comando di installazione;
+  indicare subito se gli asset necessari non sono ancora pubblicati.
+- Per Studio, VERSION segue la versione upstream integrata. FORK.json identifica
+  il pacchetto di funzionalità (attualmente Abate) e la sua revisione; non aumentare
+  VERSION per una modifica esclusiva del fork. Vedere VERSIONING.md nel repository Studio.
