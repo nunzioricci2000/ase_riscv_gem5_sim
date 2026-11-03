@@ -1,3 +1,4 @@
+<!-- Modified in the personal fork on 2026-11-03: identify the Beacon workspace and Studio integration. -->
 <!-- Modified in the personal fork on 2026-10-27: clarify licensing and redistribution requirements. -->
 <!-- Modified in the personal fork on 2026-10-27: link measured binary build and Gitflow workflow. -->
 <!-- Modified in the personal fork on 2026-10-27: reserve main/develop for the personal fork. -->
@@ -11,7 +12,7 @@ For the course environment, standard setup, simulation commands and creating
 programs, use the **[original documentation](https://github.com/cad-polito-it/ase_riscv_gem5_sim#readme)**.
 Local documentation covers only additions, corrections and different behavior.
 
-For the desktop application, start with **[ASE Studio di Nunzio · Abate](https://github.com/nunzioricci2000/ase-studio#readme)**:
+For the desktop application, start with **[ASE Studio di Nunzio · Beacon](https://github.com/nunzioricci2000/ase-studio#readme)**:
 its README starts with the standalone installer. Studio is an independent
 repository included here as the `ase_studio` submodule.
 
@@ -24,7 +25,7 @@ repository included here as the `ase_studio` submodule.
   initialization, floating-point bit preservation and build compatibility fixes.
 - **Prebuilt engine SDKs:** platform-specific binary/source pairs with checksums,
   component caches and runtime verification. These contain the engine, not the GUI.
-- **Personal Studio integration:** the Abate editor/package additions, explicit
+- **Personal Studio integration:** the Beacon Lumino workspace, inherited Monaco editor/package additions, explicit
   checkout selection and a pinned Studio submodule revision.
 
 [Detailed fork changes and source installation](FORK.md) ·
